@@ -7,7 +7,7 @@ Work on multiple branches simultaneously — each in its own directory — witho
 ## Installation
 
 ```sh
-gh extension install <your-username>/gh-worktree
+gh extension install liux4989/gh-worktreex
 ```
 
 Or, to install from a local clone:
