@@ -17,6 +17,11 @@ provision_agent_assets() {
     local src="$base_wt/$rel_path"
     local dst="$new_wt/$rel_path"
 
+    if [[ "$src" == "$dst" ]]; then
+      step "AI asset already in base worktree: $rel_path"
+      continue
+    fi
+
     if [[ ! -e "$src" && ! -L "$src" ]]; then
       warn "AI agent asset missing in base worktree: $src — skipping"
       continue
