@@ -46,7 +46,7 @@ An approach that auto-detects project type on every `worktree add` has a critica
 ## 4. Goals & Non-Goals
 
 ### Goals (v1)
-- **One-time setup via `init`**: scan the repo, scaffold `.worktreex.yml`, let the user declare intent once.
+- **One-time setup via `init`**: scan the repo, scaffold `.github/worktreex.json`, let the user declare intent once.
 - **Config as single source of truth**: provisioners read only the config; no scattered detection on every `worktree add`.
 - **Monorepo-aware**: `projects[]` lets each sub-project declare its own node/python/dotenv strategy.
 - On `worktreex new` / `worktreex pr`: provision every declared project so the worktree is immediately runnable.
@@ -68,7 +68,7 @@ An approach that auto-detects project type on every `worktree add` has a critica
 gh worktreex <command> [flags]
 
 Commands:
-  init                 Scaffold .worktreex.yml in the main worktree (run once)
+  init                 Scaffold .github/worktreex.json in the main worktree (run once)
   new   <branch>       Create worktree + provision all declared projects
   pr    <number>       Checkout PR in a worktree + provision all declared projects
   sync  [path]         Re-provision an existing worktree from config
@@ -80,7 +80,7 @@ Commands:
 Global flags:
   --no-provision       Skip provisioning when creating a worktree
   --dry-run            Print what would be done; take no filesystem action
-  --config <file>      Path to config (default: <repo-root>/.worktreex.yml)
+  --config <file>      Path to config (default: <repo-root>/.github/worktreex.json)
   -v, --verbose        Verbose output
 ```
 
@@ -93,12 +93,12 @@ gh worktreex init
 gh worktreex init --yes   # accept all suggested defaults non-interactively
 ```
 
-**Purpose:** Create `.worktreex.yml` in the main worktree root. This is the only command that touches project-structure detection; all other commands read the resulting config.
+**Purpose:** Create `.github/worktreex.json` in the main worktree root. This is the only command that touches project-structure detection; all other commands read the resulting config.
 
 **Steps executed:**
 
 ```
-1. Abort if .worktreex.yml already exists (unless --force).
+1. Abort if .github/worktreex.json already exists (unless --force).
 2. Scan repo for signals to suggest project entries:
      package.json / pnpm-workspace.yaml  → suggest node project(s)
      pyproject.toml / requirements*.txt  → suggest python project(s)
@@ -110,7 +110,7 @@ gh worktreex init --yes   # accept all suggested defaults non-interactively
      - Python mode: shared_venv | per_worktree
      - Dotenv mode: copy_example | copy | shared_parent | skip
 4. Ask for repo-wide defaults (base_worktree, direnv template).
-5. Write .worktreex.yml.
+5. Write .github/worktreex.json.
 6. Print next steps:
      "Run 'gh worktreex new <branch>' to create your first provisioned worktree."
 ```
@@ -120,9 +120,9 @@ gh worktreex init --yes   # accept all suggested defaults non-interactively
 | Flag | Description |
 |---|---|
 | `--yes` | Accept all detected defaults without prompting |
-| `--force` | Overwrite existing `.worktreex.yml` |
+| `--force` | Overwrite existing `.github/worktreex.json` |
 
-> After `init`, **commit `.worktreex.yml`** to the repo so all team members share the same provisioning config.
+> After `init`, **commit `.github/worktreex.json`** to the repo so all team members share the same provisioning config.
 
 ---
 
@@ -133,7 +133,7 @@ gh worktreex new feature/dark-mode
 ```
 
 Steps executed:
-1. Load and validate `.worktreex.yml` (abort with clear error if missing — suggest `init`).
+1. Load and validate `.github/worktreex.json` (abort with clear error if missing — suggest `init`).
 2. Run `git worktree add -b <branch> <path>`.
 3. For each entry in `projects[]`, run its declared provisioner (see §6).
 4. If `direnv.enabled`, write `.envrc` from template and run `direnv allow <path>`.
@@ -297,63 +297,81 @@ Triggered by a top-level `direnv:` block in the config. Applied repo-wide (not p
 
 ---
 
-## 7. Configuration File — `.worktreex.yml`
+## 7. Configuration File — `.github/worktreex.json`
 
-Created by `init`, lives at the **repo root of the main worktree**, committed to version control.
+Created by `init`, lives at **`.github/worktreex.json`** in the main worktree, committed to version control. Using `.github/` keeps the repo root clean and co-locates the config with other GitHub-aware tooling.
 
-```yaml
-version: 1
+Parsed at runtime with `jq` (required dependency).
 
-# Branch name of the base (source) worktree
-default_base: main
+```json
+{
+  "version": 1,
 
-# ── Repo-wide defaults ────────────────────────────────────────────────────────
-env:
-  node:
-    mode: symlink_modules   # symlink_modules | per_worktree
-    base_worktree: main     # which worktree's node_modules to symlink from
-    package_manager: pnpm   # npm | yarn | pnpm | bun (auto-detected if omitted)
-    install_cmd: pnpm install
+  "default_base": "main",
 
-direnv:
-  enabled: true
-  template: |
-    layout python ~/.venvs/myproj
-    if [ -f ../.env.shared ]; then
-      export $(cat ../.env.shared | xargs)
-    fi
+  "env": {
+    "node": {
+      "mode": "symlink_modules",
+      "base_worktree": "main",
+      "package_manager": "pnpm",
+      "install_cmd": "pnpm install"
+    }
+  },
 
-# ── Per-project declarations ──────────────────────────────────────────────────
-projects:
-  - name: web
-    root: apps/web               # relative to repo root; "." for root-level projects
-    node:
-      mode: symlink_modules      # inherits repo-wide default if omitted
-      install_cmd: pnpm install --filter web
-    dotenv:
-      mode: copy_example         # copy_example | copy | shared_parent | skip
-      example_file: .env.example
+  "direnv": {
+    "enabled": true,
+    "template": [
+      "layout python ~/.venvs/myproj",
+      "if [ -f ../.env.shared ]; then",
+      "  export $(cat ../.env.shared | xargs)",
+      "fi"
+    ]
+  },
 
-  - name: api
-    root: apps/api
-    python:
-      mode: shared_venv          # shared_venv | per_worktree
-      path: ~/.venvs/myproj-api  # required when mode is shared_venv
-      requirements: requirements.txt
-    dotenv:
-      mode: shared_parent
-      shared_path: ../../../.env.api.shared   # relative to new worktree's project root
+  "projects": [
+    {
+      "name": "web",
+      "root": "apps/web",
+      "node": {
+        "mode": "symlink_modules",
+        "install_cmd": "pnpm install --filter web"
+      },
+      "dotenv": {
+        "mode": "copy_example",
+        "example_file": ".env.example"
+      }
+    },
+    {
+      "name": "api",
+      "root": "apps/api",
+      "python": {
+        "mode": "shared_venv",
+        "path": "~/.venvs/myproj-api",
+        "requirements": "requirements.txt"
+      },
+      "dotenv": {
+        "mode": "shared_parent",
+        "shared_path": "../../../.env.api.shared"
+      }
+    },
+    {
+      "name": "ui",
+      "root": "packages/ui",
+      "node": {
+        "mode": "per_worktree"
+      }
+    }
+  ],
 
-  - name: ui
-    root: packages/ui
-    node:
-      mode: per_worktree         # override repo-wide default; run install fresh
-
-# ── Lifecycle hooks ───────────────────────────────────────────────────────────
-hooks:
-  post_provision:
-    - echo "Worktree ready: $WORKTREEX_PATH (branch: $WORKTREEX_BRANCH)"
+  "hooks": {
+    "post_provision": [
+      "echo \"Worktree ready: $WORKTREEX_PATH (branch: $WORKTREEX_BRANCH)\""
+    ]
+  }
+}
 ```
+
+> **`direnv.template`** is an array of strings (one per line). The provisioner joins them with `\n` before writing `.envrc`. This avoids multi-line string escaping complexity in JSON.
 
 ### 7.1 Schema Reference
 
@@ -475,8 +493,8 @@ Configure project "ui" (packages/ui):
 direnv detected. Enable direnv integration? [Y/n]: Y
   .envrc template (Enter to use default):
 
-✔ Writing .worktreex.yml
-✔ Done. Commit .worktreex.yml to share this config with your team.
+✔ Writing .github/worktreex.json
+✔ Done. Commit .github/worktreex.json to share this config with your team.
    Next: gh worktreex new <branch>
 ```
 
@@ -486,7 +504,7 @@ direnv detected. Enable direnv integration? [Y/n]: Y
 
 | Scenario | Behavior |
 |---|---|
-| `.worktreex.yml` missing on `new`/`pr`/`sync` | Abort: `"Config not found. Run: gh worktreex init"` |
+| `.github/worktreex.json` missing on `new`/`pr`/`sync` | Abort: `"Config not found. Run: gh worktreex init"` |
 | `version` field missing or unsupported | Abort with schema version error |
 | `node_modules/` absent in base, mode `symlink_modules` | Warn; skip this project; continue others |
 | Target asset already correctly provisioned | Skip silently |
@@ -506,22 +524,26 @@ direnv detected. Enable direnv integration? [Y/n]: Y
 ## 10. File Structure (Extension Repo)
 
 ```
-gh-worktreex/
-├── gh-worktreex                  ← main entry point (bash); command dispatcher
+gh-worktreex/                         ← extension repo (this project)
+├── gh-worktreex                       ← main entry point (bash); command dispatcher
 ├── lib/
-│   ├── config.sh                 ← parse .worktreex.yml → shell variables (via yq)
-│   ├── init.sh                   ← interactive init wizard + config writer
-│   ├── provision.sh              ← orchestrator: iterate projects[], call provisioners
+│   ├── config.sh                      ← parse .github/worktreex.json (via jq)
+│   ├── init.sh                        ← interactive init wizard + config writer
+│   ├── provision.sh                   ← orchestrator: iterate projects[], call provisioners
 │   ├── provisioners/
-│   │   ├── node.sh               ← symlink_modules / per_worktree logic
-│   │   ├── python.sh             ← shared_venv / per_worktree logic
-│   │   ├── dotenv.sh             ← copy_example / copy / shared_parent logic
-│   │   └── direnv.sh             ← .envrc template rendering + direnv allow
-│   ├── hooks.sh                  ← post_provision hook runner
-│   └── utils.sh                  ← logging helpers, dry-run wrapper, path resolution
-├── .worktreex.yml.example        ← annotated reference config for users
+│   │   ├── node.sh                    ← symlink_modules / per_worktree logic
+│   │   ├── python.sh                  ← shared_venv / per_worktree logic
+│   │   ├── dotenv.sh                  ← copy_example / copy / shared_parent logic
+│   │   └── direnv.sh                  ← .envrc template rendering + direnv allow
+│   ├── hooks.sh                       ← post_provision hook runner
+│   └── utils.sh                       ← logging helpers, dry-run wrapper, path resolution
+├── worktreex.json.example             ← reference config; users copy to .github/worktreex.json
 ├── README.md
-└── v1_spec.md                    ← this file
+└── v1_spec.md                         ← this file
+
+User repo (after init):
+└── .github/
+    └── worktreex.json                 ← created by `gh worktreex init`, committed to VCS
 ```
 
 **Key design principle:** `provision.sh` is the only file that knows about `projects[]`. Individual provisioner scripts in `provisioners/` receive parameters as arguments or env vars — they have no knowledge of config structure and are independently testable.
@@ -530,8 +552,8 @@ gh-worktreex/
 
 ## 11. Success Criteria (v1 Done)
 
-- [ ] `gh worktreex init` produces a valid `.worktreex.yml` for a Node.js monorepo.
-- [ ] `gh worktreex init` produces a valid `.worktreex.yml` for a Python project.
+- [ ] `gh worktreex init` produces a valid `.github/worktreex.json` for a Node.js monorepo.
+- [ ] `gh worktreex init` produces a valid `.github/worktreex.json` for a Python project.
 - [ ] `gh worktreex init --yes` runs non-interactively with sensible defaults.
 - [ ] `gh worktreex new <branch>` creates a worktree where every declared project is immediately runnable (no manual `npm install` / `pip install`).
 - [ ] `gh worktreex pr <number>` does the same for a PR checkout.
@@ -544,15 +566,15 @@ gh-worktreex/
 - [ ] Both Python modes (`shared_venv`, `per_worktree`) work correctly.
 - [ ] direnv integration writes `.envrc` from template and runs `direnv allow`.
 - [ ] Works on macOS and Linux (bash 4+).
-- [ ] No required deps beyond `git`, `gh`, `python3`, coreutils — `yq` required for config parsing (clearly documented).
+- [ ] No required deps beyond `git`, `gh`, `python3`, coreutils — `jq` required for config parsing (clearly documented).
 
 ---
 
 ## 12. Open Questions
 
-1. **`yq` as hard dependency:** Cleanest YAML parser available in bash. Alternatives: bundle a minimal awk-based parser (fragile) or switch to JSON config (loses familiarity). Recommendation: require `yq`, print a clear install message when absent.
+1. ~~**`jq` as hard dependency**~~ **Resolved:** Switching to JSON means `jq` is the natural parser. `jq` is widely available (pre-installed on macOS via Homebrew, standard on most Linux distros, and bundled with GitHub Actions runners). This is strictly simpler than `yq` for YAML. `init` will check for `jq` and print a clear install message if absent.
 2. ~~**pnpm with `symlink_modules`**~~ **Resolved:** pnpm defaults to `per_worktree` + `pnpm install --frozen-lockfile`. Symlinking pnpm's `node_modules/` is unsafe because its virtual store (`.pnpm/`) contains worktree-relative paths. `init` auto-sets `mode: per_worktree` and `install_cmd: pnpm install --frozen-lockfile` on pnpm detection. This is fast due to hardlinking from `~/.pnpm-store`.
-3. **`init --force` backup:** Should overwriting an existing config also write a `.worktreex.yml.bak` to prevent accidental loss?
-4. **Config location:** `.worktreex.yml` at repo root is discoverable. `.github/worktreex.yml` is cleaner for repos with strict root conventions. Support both locations with root taking precedence?
+3. **`init --force` backup:** Should overwriting an existing config also write a `.github/worktreex.json.bak` to prevent accidental loss?
+4. ~~**Config location**~~ **Resolved:** Config lives at `.github/worktreex.json`. Keeps the repo root clean, co-locates with other GitHub tooling (Actions, Dependabot, etc.), and the `.github/` directory is already gitignore-safe. JSON chosen over YAML to eliminate the `yq` dependency in favour of ubiquitous `jq`.
 5. **`sync` scope:** Should `sync` re-provision all worktrees or only the specified one? Current decision: one worktree at a time (safer, explicit).
 6. **Stale shared venv:** If `shared_venv` is used and `requirements.txt` changes on a new branch, the shared venv is mutated for all worktrees. Should `sync` detect a changed requirements file and warn the user?
