@@ -99,23 +99,30 @@ cmd_init() {
   # ── Detect package manager ─────────────────────────────────────────────────
   detect_pkg_manager() {
     local proj_dir="$1"
-    if [[ -f "$proj_dir/pnpm-lock.yaml" || -f "$proj_dir/pnpm-workspace.yaml" ]]; then echo "pnpm"
-    elif [[ -f "$proj_dir/bun.lockb" ]]; then echo "bun"
-    elif [[ -f "$proj_dir/yarn.lock" ]]; then echo "yarn"
-    elif [[ -f "$proj_dir/package-lock.json" ]]; then echo "npm"
+    local root_dir="$repo_root"
+    if [[ -f "$proj_dir/pnpm-lock.yaml" || -f "$proj_dir/pnpm-workspace.yaml" \
+       || -f "$root_dir/pnpm-lock.yaml" || -f "$root_dir/pnpm-workspace.yaml" ]]; then echo "pnpm"
+    elif [[ -f "$proj_dir/bun.lockb" || -f "$root_dir/bun.lockb" ]]; then echo "bun"
+    elif [[ -f "$proj_dir/yarn.lock" || -f "$root_dir/yarn.lock" ]]; then echo "yarn"
+    elif [[ -f "$proj_dir/package-lock.json" || -f "$root_dir/package-lock.json" ]]; then echo "npm"
     else echo "npm"
     fi
   }
 
   # ── Prompt helper ─────────────────────────────────────────────────────────
   prompt_with_default() {
-    local question="$1" default="$2"
+    local question="$1" default="$2" hint="${3:-}"
     if [[ "$yes_mode" == "1" ]]; then
       echo "$default"
       return
     fi
     local answer
-    read -r -p "$question [$default]: " answer
+    if [[ -n "$hint" ]]; then
+      echo "$question"
+      read -r -p "    $hint (default: $default): " answer
+    else
+      read -r -p "$question (default: $default): " answer
+    fi
     echo "${answer:-$default}"
   }
 
@@ -125,8 +132,18 @@ cmd_init() {
       echo "$default"
       return
     fi
+    # Display options with the default highlighted
+    local IFS='/' options_display=""
+    for opt in $choices; do
+      if [[ "$opt" == "$default" ]]; then
+        options_display+="${options_display:+, }${opt} (default)"
+      else
+        options_display+="${options_display:+, }${opt}"
+      fi
+    done
     local answer
-    read -r -p "$question [$choices] ($default): " answer
+    echo "$question"
+    read -r -p "    Options: $options_display: " answer
     echo "${answer:-$default}"
   }
 
@@ -155,7 +172,7 @@ cmd_init() {
 
     local pm
     pm="$(detect_pkg_manager "$proj_dir")"
-    pm="$(prompt_with_default "  Package manager" "$pm")"
+    pm="$(prompt_choice "  Package manager" "npm/pnpm/yarn/bun" "$pm")"
 
     # pnpm always gets per_worktree
     local default_node_mode="symlink_modules"
@@ -171,16 +188,16 @@ cmd_init() {
       default_install_cmd="pnpm install --frozen-lockfile"
     fi
     local install_cmd
-    install_cmd="$(prompt_with_default "  Install command" "$default_install_cmd")"
+    install_cmd="$(prompt_with_default "  Install command" "$default_install_cmd" "Command to install dependencies")"
 
     local dot_mode
     dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip")"
 
     local dot_example="" dot_shared=""
     if [[ "$dot_mode" == "copy_example" ]]; then
-      dot_example="$(prompt_with_default "  Example file" ".env.example")"
+      dot_example="$(prompt_with_default "  Example file" ".env.example" "Path to .env template file")"
     elif [[ "$dot_mode" == "shared_parent" ]]; then
-      dot_shared="$(prompt_with_default "  Shared env path" "../.env.shared")"
+      dot_shared="$(prompt_with_default "  Shared env path" "../.env.shared" "Path to shared .env file")"
     fi
 
     # Build project JSON
@@ -235,21 +252,21 @@ cmd_init() {
 
     local py_path="" py_reqs=""
     if [[ "$py_mode" == "shared_venv" ]]; then
-      py_path="$(prompt_with_default "  Shared venv path" "~/.venvs/${repo_name}-${proj_name}")"
+      py_path="$(prompt_with_default "  Shared venv path" "~/.venvs/${repo_name}-${proj_name}" "Path to shared virtualenv directory")"
     fi
 
     # Auto-detect requirements file
     local default_reqs="requirements.txt"
     [[ -f "$proj_dir/requirements/base.txt" ]] && default_reqs="requirements/base.txt"
-    py_reqs="$(prompt_with_default "  Requirements file" "$default_reqs")"
+    py_reqs="$(prompt_with_default "  Requirements file" "$default_reqs" "Path to pip requirements file")"
 
     local dot_mode
     dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip")"
     local dot_example="" dot_shared=""
     if [[ "$dot_mode" == "copy_example" ]]; then
-      dot_example="$(prompt_with_default "  Example file" ".env.example")"
+      dot_example="$(prompt_with_default "  Example file" ".env.example" "Path to .env template file")"
     elif [[ "$dot_mode" == "shared_parent" ]]; then
-      dot_shared="$(prompt_with_default "  Shared env path" "../.env.shared")"
+      dot_shared="$(prompt_with_default "  Shared env path" "../.env.shared" "Path to shared .env file")"
     fi
 
     local proj_json
@@ -283,7 +300,7 @@ cmd_init() {
   if [[ "$(echo "$projects_json" | jq 'length')" == "0" ]]; then
     warn "No projects auto-detected. You can manually edit $config_file after creation."
     local proj_name
-    proj_name="$(prompt_with_default "Project name" "$repo_name")"
+    proj_name="$(prompt_with_default "Project name" "$repo_name" "Name for this project")"
     projects_json="[$(jq -n --arg name "$proj_name" '{name: $name, root: "."}')]"
   fi
 
@@ -298,7 +315,7 @@ cmd_init() {
   else
     default_base="main"
   fi
-  default_base="$(prompt_with_default "Default base branch" "$default_base")"
+  default_base="$(prompt_with_default "Default base branch" "$default_base" "Branch name used as base for new worktrees")"
 
   # ── direnv ────────────────────────────────────────────────────────────────
   local direnv_json="null"
