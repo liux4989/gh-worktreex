@@ -7,6 +7,7 @@ source "$PROVISION_DIR/provisioners/node.sh"
 source "$PROVISION_DIR/provisioners/python.sh"
 source "$PROVISION_DIR/provisioners/dotenv.sh"
 source "$PROVISION_DIR/provisioners/direnv.sh"
+source "$PROVISION_DIR/provisioners/agent.sh"
 source "$PROVISION_DIR/hooks.sh"
 
 provision_worktree() {
@@ -73,6 +74,18 @@ provision_worktree() {
     local tmpl
     tmpl="$(config_get_direnv_template)"
     provision_direnv "$new_wt" "$branch" "$base_wt" "$tmpl"
+  fi
+
+  # AI agent assets provisioner (repo-wide)
+  if config_has_agent_assets; then
+    local agent_mode
+    local -a agent_paths=()
+    agent_mode="$(config_get_agent_mode)"
+    while IFS= read -r p; do
+      [[ -n "$p" ]] && agent_paths+=("$p")
+    done < <(config_get_agent_paths)
+
+    provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}"
   fi
 
   # Post-provision hooks

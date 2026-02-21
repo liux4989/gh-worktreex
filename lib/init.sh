@@ -98,6 +98,24 @@ cmd_init() {
     has_direnv=1
   fi
 
+  # Detect AI agent assets to carry across worktrees
+  local -a found_agent_assets=()
+  local -a agent_asset_candidates=(
+    "AGENTS.md"
+    "Agents.md"
+    ".claude"
+    ".agents"
+    ".agents/skills"
+    ".codex/skills"
+  )
+  local agent_asset
+  for agent_asset in "${agent_asset_candidates[@]}"; do
+    if [[ -e "$repo_root/$agent_asset" || -L "$repo_root/$agent_asset" ]]; then
+      found_agent_assets+=("$agent_asset")
+      info "  Found: $agent_asset  (AI agent asset)"
+    fi
+  done
+
   # ── Detect package manager ─────────────────────────────────────────────────
   detect_pkg_manager() {
     local proj_dir="$1"
@@ -391,19 +409,47 @@ cmd_init() {
     fi
   fi
 
+  # ── AI agent assets ───────────────────────────────────────────────────────
+  local agent_json="null"
+  if [[ ${#found_agent_assets[@]} -gt 0 ]]; then
+    local enable_agent_assets="n"
+    if [[ "$yes_mode" == "1" ]]; then
+      enable_agent_assets="y"
+    else
+      read -r -p "$(echo -e "\nAI agent files detected. Provision them in new worktrees? [Y/n]: ")" enable_agent_assets
+      enable_agent_assets="${enable_agent_assets:-y}"
+    fi
+
+    if [[ "$enable_agent_assets" =~ ^[Yy]$ ]]; then
+      local agent_mode
+      agent_mode="$(prompt_choice "  AI asset mode" "symlink/copy" "symlink" \
+        "symlink keeps one shared source of truth. copy creates independent per-worktree files.")"
+
+      local agent_paths_json
+      agent_paths_json="$(jq -n --args "${found_agent_assets[@]}" '$ARGS.positional')"
+      agent_json="$(jq -n \
+        --arg mode "$agent_mode" \
+        --argjson paths "$agent_paths_json" \
+        '{enabled: true, mode: $mode, paths: $paths}'
+      )"
+    fi
+  fi
+
   # ── Build final config ────────────────────────────────────────────────────
   local config_json
   config_json="$(jq -n \
     --arg default_base "$default_base" \
     --argjson projects "$projects_json" \
     --argjson direnv_block "$direnv_json" \
+    --argjson agent_block "$agent_json" \
     '{
       version: 1,
       default_base: $default_base,
       projects: $projects,
       hooks: {post_provision: []}
     }
-    + (if $direnv_block != null then {direnv: $direnv_block} else {} end)'
+    + (if $direnv_block != null then {direnv: $direnv_block} else {} end)
+    + (if $agent_block != null then {agent: $agent_block} else {} end)'
   )"
 
   # ── Write config ──────────────────────────────────────────────────────────

@@ -194,6 +194,40 @@ cmd_status() {
 
       echo -e "  ${BOLD}${proj}${RESET}  [${root}]${detail}"
     done
+
+    if config_has_agent_assets; then
+      local -a agent_paths=()
+      while IFS= read -r p; do
+        [[ -n "$p" ]] && agent_paths+=("$p")
+      done < <(config_get_agent_paths)
+
+      local agent_ok=0
+      local agent_total="${#agent_paths[@]}"
+      local missing_assets=""
+      local ap
+      for ap in "${agent_paths[@]}"; do
+        if [[ -e "${wt_path}/${ap}" || -L "${wt_path}/${ap}" ]]; then
+          agent_ok=$((agent_ok + 1))
+        else
+          missing_assets+="${ap} "
+        fi
+      done
+
+      local agent_status
+      if [[ "$agent_ok" -eq "$agent_total" ]]; then
+        agent_status="${GREEN}${agent_ok}/${agent_total}${RESET}"
+      elif [[ "$agent_ok" -gt 0 ]]; then
+        agent_status="${YELLOW}${agent_ok}/${agent_total}${RESET}"
+      else
+        agent_status="${RED}${agent_ok}/${agent_total}${RESET}"
+      fi
+
+      if [[ -n "$missing_assets" ]]; then
+        echo -e "  ${BOLD}agent-assets${RESET}  [${agent_status}] missing: ${missing_assets% }"
+      else
+        echo -e "  ${BOLD}agent-assets${RESET}  [${agent_status}]"
+      fi
+    fi
     echo ""
   done < <(git worktree list)
 }
@@ -236,6 +270,21 @@ cmd_list() {
         summary+=" ${proj}(${ok_count}/${total})"
       fi
     done
+
+    if config_has_agent_assets; then
+      local -a agent_paths=()
+      while IFS= read -r p; do
+        [[ -n "$p" ]] && agent_paths+=("$p")
+      done < <(config_get_agent_paths)
+
+      local agent_ok=0
+      local agent_total="${#agent_paths[@]}"
+      local ap
+      for ap in "${agent_paths[@]}"; do
+        [[ -e "${wt_path}/${ap}" || -L "${wt_path}/${ap}" ]] && agent_ok=$((agent_ok + 1))
+      done
+      [[ "$agent_total" -gt 0 ]] && summary+=" agent(${agent_ok}/${agent_total})"
+    fi
 
     echo -e "${wt_path}  ${CYAN}${wt_branch}${RESET} ${summary}"
   done < <(git worktree list)

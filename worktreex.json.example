@@ -22,6 +22,18 @@
     ]
   },
 
+  "agent": {
+    "enabled": true,
+    "mode": "symlink",
+    "paths": [
+      "AGENTS.md",
+      ".claude",
+      ".agents",
+      ".agents/skills",
+      ".codex/skills"
+    ]
+  },
+
   "projects": [
     {
       "name": "web",

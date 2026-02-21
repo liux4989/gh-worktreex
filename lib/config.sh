@@ -113,6 +113,20 @@ config_get_direnv_template() {
   jq -r '(.direnv.template // []) | join("\n")' "$CONFIG_FILE"
 }
 
+# AI agent asset helpers
+
+config_get_agent_enabled() {
+  jq -r '.agent.enabled // "false"' "$CONFIG_FILE"
+}
+
+config_get_agent_mode() {
+  jq -r '.agent.mode // "symlink"' "$CONFIG_FILE"
+}
+
+config_get_agent_paths() {
+  jq -r '(.agent.paths // [])[]' "$CONFIG_FILE"
+}
+
 # Hooks
 
 config_get_hooks_post_provision() {
@@ -134,4 +148,8 @@ config_has_python() {
 config_has_dotenv() {
   local name="$1"
   jq -e --arg n "$name" '.projects[] | select(.name==$n) | .dotenv' "$CONFIG_FILE" >/dev/null 2>&1
+}
+
+config_has_agent_assets() {
+  jq -e '(.agent.enabled // false) == true and ((.agent.paths // []) | length > 0)' "$CONFIG_FILE" >/dev/null 2>&1
 }
