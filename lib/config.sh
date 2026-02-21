@@ -127,6 +127,10 @@ config_get_agent_paths() {
   jq -r '(.agent.paths // [])[]' "$CONFIG_FILE"
 }
 
+config_get_agent_excludes() {
+  jq -r '(.agent.exclude // [])[]' "$CONFIG_FILE"
+}
+
 # Hooks
 
 config_get_hooks_post_provision() {

@@ -457,5 +457,5 @@ cmd_init() {
   echo ""
   ok "Writing $config_file"
   ok "Done. Commit .github/worktreex.json to share this config with your team."
-  echo -e "   Next: ${BOLD}gh worktreex new <branch>${RESET}"
+  echo -e "   Next: ${BOLD}gh worktreex add <branch>${RESET}"
 }

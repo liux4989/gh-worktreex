@@ -49,7 +49,7 @@ An approach that auto-detects project type on every `worktree add` has a critica
 - **One-time setup via `init`**: scan the repo, scaffold `.github/worktreex.json`, let the user declare intent once.
 - **Config as single source of truth**: provisioners read only the config; no scattered detection on every `worktree add`.
 - **Monorepo-aware**: `projects[]` lets each sub-project declare its own node/python/dotenv strategy.
-- On `worktreex new` / `worktreex pr`: provision every declared project so the worktree is immediately runnable.
+- On `worktreex add` / `worktreex pr`: provision every declared project so the worktree is immediately runnable.
 - `worktreex sync` to re-apply provisioning to an existing worktree (idempotent).
 - `worktreex status` to show per-project provisioning state across all worktrees.
 - direnv integration: write `.envrc` from a template and run `direnv allow`.
@@ -69,7 +69,7 @@ gh worktreex <command> [flags]
 
 Commands:
   init                 Scaffold .github/worktreex.json in the main worktree (run once)
-  new   <branch>       Create worktree + provision all declared projects
+  add   <branch>       Create worktree + provision all declared projects
   pr    <number>       Checkout PR in a worktree + provision all declared projects
   sync  [path]         Re-provision an existing worktree from config
   status               Show per-project provisioning state across all worktrees
@@ -112,7 +112,7 @@ gh worktreex init --yes   # accept all suggested defaults non-interactively
 4. Ask for repo-wide defaults (base_worktree, direnv template).
 5. Write .github/worktreex.json.
 6. Print next steps:
-     "Run 'gh worktreex new <branch>' to create your first provisioned worktree."
+     "Run 'gh worktreex add <branch>' to create your first provisioned worktree."
 ```
 
 **Flags:**
@@ -126,10 +126,10 @@ gh worktreex init --yes   # accept all suggested defaults non-interactively
 
 ---
 
-### 5.2 `new` — create + provision
+### 5.2 `add` — create + provision
 
 ```sh
-gh worktreex new feature/dark-mode
+gh worktreex add feature/dark-mode
 ```
 
 Steps executed:
@@ -146,7 +146,7 @@ Steps executed:
 gh worktreex pr 42
 ```
 
-Same as `new` but fetches the PR branch via `gh pr checkout`. Worktree placed at `../myrepo-pr-42`.
+Same as `add` but fetches the PR branch via `gh pr checkout`. Worktree placed at `../myrepo-pr-42`.
 
 ### 5.4 `sync` — re-provision
 
@@ -495,7 +495,7 @@ direnv detected. Enable direnv integration? [Y/n]: Y
 
 ✔ Writing .github/worktreex.json
 ✔ Done. Commit .github/worktreex.json to share this config with your team.
-   Next: gh worktreex new <branch>
+   Next: gh worktreex add <branch>
 ```
 
 ---
@@ -504,7 +504,7 @@ direnv detected. Enable direnv integration? [Y/n]: Y
 
 | Scenario | Behavior |
 |---|---|
-| `.github/worktreex.json` missing on `new`/`pr`/`sync` | Abort: `"Config not found. Run: gh worktreex init"` |
+| `.github/worktreex.json` missing on `add`/`pr`/`sync` | Abort: `"Config not found. Run: gh worktreex init"` |
 | `version` field missing or unsupported | Abort with schema version error |
 | `node_modules/` absent in base, mode `symlink_modules` | Warn; skip this project; continue others |
 | Target asset already correctly provisioned | Skip silently |
@@ -555,7 +555,7 @@ User repo (after init):
 - [ ] `gh worktreex init` produces a valid `.github/worktreex.json` for a Node.js monorepo.
 - [ ] `gh worktreex init` produces a valid `.github/worktreex.json` for a Python project.
 - [ ] `gh worktreex init --yes` runs non-interactively with sensible defaults.
-- [ ] `gh worktreex new <branch>` creates a worktree where every declared project is immediately runnable (no manual `npm install` / `pip install`).
+- [ ] `gh worktreex add <branch>` creates a worktree where every declared project is immediately runnable (no manual `npm install` / `pip install`).
 - [ ] `gh worktreex pr <number>` does the same for a PR checkout.
 - [ ] `gh worktreex sync` is idempotent and safe to run multiple times.
 - [ ] `gh worktreex status` correctly shows per-project provisioning state across all worktrees.

@@ -21,7 +21,7 @@ gh extension install .
 | Command | Description |
 |---------|-------------|
 | `gh worktree list` | List all active worktrees |
-| `gh worktree new <branch>` | Create a worktree for a branch (creates branch if absent) |
+| `gh worktree add <branch>` | Create a worktree for a branch (creates branch if absent) |
 | `gh worktree pr <number>` | Check out a GitHub PR in its own worktree |
 | `gh worktree rm <path\|branch>` | Remove a worktree (optionally deletes the branch) |
 | `gh worktree clean` | Remove worktrees for merged/deleted branches |
@@ -45,7 +45,7 @@ Worktrees:
 ### Create a worktree for a branch
 
 ```sh
-gh worktree new feature/my-thing
+gh worktree add feature/my-thing
 ```
 
 Creates the branch if it does not already exist, then places the worktree at `../myrepo-feature-my-thing`.

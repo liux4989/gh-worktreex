@@ -31,6 +31,9 @@
       ".agents",
       ".agents/skills",
       ".codex/skills"
+    ],
+    "exclude": [
+      ".claude/settings.local.json"
     ]
   },
 

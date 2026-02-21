@@ -80,12 +80,16 @@ provision_worktree() {
   if config_has_agent_assets; then
     local agent_mode
     local -a agent_paths=()
+    local -a agent_excludes=()
     agent_mode="$(config_get_agent_mode)"
     while IFS= read -r p; do
       [[ -n "$p" ]] && agent_paths+=("$p")
     done < <(config_get_agent_paths)
+    while IFS= read -r e; do
+      [[ -n "$e" ]] && agent_excludes+=("$e")
+    done < <(config_get_agent_excludes)
 
-    provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}"
+    provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}" --exclude "${agent_excludes[@]}"
   fi
 
   # Post-provision hooks
