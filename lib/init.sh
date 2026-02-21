@@ -426,7 +426,7 @@ cmd_init() {
         "symlink keeps one shared source of truth. copy creates independent per-worktree files.")"
 
       local agent_paths_json
-      agent_paths_json="$(jq -n --args "${found_agent_assets[@]}" '$ARGS.positional')"
+      agent_paths_json="$(jq -n '$ARGS.positional' --args "${found_agent_assets[@]}")"
       agent_json="$(jq -n \
         --arg mode "$agent_mode" \
         --argjson paths "$agent_paths_json" \
