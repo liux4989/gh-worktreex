@@ -68,7 +68,7 @@ cmd_add() {
   fi
 
   # Resolve relative paths
-  [[ "$wt_path" != /* ]] && wt_path="$(realpath -m "$wt_path")"
+  wt_path="$(resolve_path "$wt_path")"
 
   info "Creating worktree for branch '$branch' at $wt_path"
 

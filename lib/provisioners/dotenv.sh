@@ -51,7 +51,7 @@ provision_dotenv() {
       if [[ "$shared_path" == ~* || "$shared_path" == /* ]]; then
         resolved="$(resolve_path "$shared_path")"
       else
-        resolved="$(realpath -m "$new_proj/$shared_path")"
+        resolved="$(resolve_path "$new_proj/$shared_path")"
       fi
       if [[ ! -e "$resolved" ]]; then
         warn "Shared .env path not found: $resolved — skipping"

@@ -26,11 +26,24 @@ run_cmd() {
   fi
 }
 
-# Resolve path supporting ~/ expansion and making absolute
+# Resolve path supporting ~/ expansion and making absolute.
+# Pure-bash implementation — works on macOS and Linux without GNU coreutils.
 resolve_path() {
   local p="$1"
   p="${p/#\~/$HOME}"
-  echo "$(realpath -m "$p")"
+  # Make absolute
+  [[ "$p" != /* ]] && p="$PWD/$p"
+  # Normalize . and .. components
+  local result="" part
+  local IFS="/"
+  for part in $p; do
+    case "$part" in
+      ""|.) ;;
+      ..) result="${result%/*}" ;;
+      *)  result="$result/$part" ;;
+    esac
+  done
+  echo "${result:-/}"
 }
 
 # Check binary available
