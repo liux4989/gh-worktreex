@@ -120,7 +120,7 @@ cmd_init() {
     fi
     local answer
     if [[ -n "$hint" ]]; then
-      echo "$question"
+      echo "$question" >&2
       read -r -p "    $hint (default: $default): " answer
     else
       read -r -p "$question (default: $default): " answer
@@ -144,7 +144,7 @@ cmd_init() {
       fi
     done
     local answer
-    echo "$question"
+    echo "$question" >&2
     read -r -p "    Options: $options_display: " answer
     echo "${answer:-$default}"
   }
