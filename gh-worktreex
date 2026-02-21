@@ -121,14 +121,35 @@ cmd_sync() {
   wt_path="$(resolve_path "$wt_path")"
   config_load
 
-  # Detect branch for the worktree
-  local branch
-  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)" \
-    || die "Not a valid git worktree: $wt_path"
+  # Sync must be initiated from the base worktree.
+  local default_base base_wt
+  default_base="$(config_get_default_base)"
+  base_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$default_base" '/^worktree /{p=$2} $0=="branch "b{print p; exit}')"
+  [[ -z "$base_wt" ]] && base_wt="$(git rev-parse --show-toplevel)"
+  if [[ "$wt_path" != "$base_wt" ]]; then
+    die "Sync must be run from the base worktree ($default_base)."
+  fi
 
-  info "Syncing worktree at $wt_path (branch: $branch)"
-  provision_worktree "$wt_path" "$branch"
-  ok "Sync complete: $wt_path"
+  info "Syncing all worktrees from base: $base_wt ($default_base)"
+
+  while IFS= read -r line; do
+    local line_wt line_branch
+    line_wt="$(echo "$line" | awk '{print $1}')"
+    line_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
+
+    # Skip bare worktrees
+    echo "$line" | grep -q '(bare)' && continue
+
+    # Resolve branch if missing
+    if [[ -z "$line_branch" || "$line_branch" == "HEAD" ]]; then
+      line_branch="$(git -C "$line_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+    fi
+
+    info "Syncing worktree at $line_wt (branch: $line_branch)"
+    provision_worktree "$line_wt" "$line_branch" "$base_wt"
+  done < <(git worktree list)
+
+  ok "Sync complete: all worktrees"
 }
 
 cmd_status() {
