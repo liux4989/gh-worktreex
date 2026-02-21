@@ -134,19 +134,33 @@ cmd_init() {
       echo "$default"
       return
     fi
-    # Display options with the default highlighted
-    local IFS='/' options_display=""
+    # Build indexed option list
+    local IFS='/'
+    local -a opts=()
+    local default_idx=1 idx=0
     for opt in $choices; do
-      if [[ "$opt" == "$default" ]]; then
-        options_display+="${options_display:+, }${opt} (default)"
+      idx=$((idx + 1))
+      opts+=("$opt")
+      [[ "$opt" == "$default" ]] && default_idx=$idx
+    done
+    echo "$question:" >&2
+    for i in "${!opts[@]}"; do
+      local num=$((i + 1))
+      if [[ "${opts[$i]}" == "$default" ]]; then
+        echo "    $num) ${opts[$i]} (default)" >&2
       else
-        options_display+="${options_display:+, }${opt}"
+        echo "    $num) ${opts[$i]}" >&2
       fi
     done
     local answer
-    echo "$question" >&2
-    read -r -p "    Options: $options_display: " answer
-    echo "${answer:-$default}"
+    read -r -p "    Enter choice [1-${#opts[@]}, default=$default_idx]: " answer
+    if [[ -z "$answer" ]]; then
+      echo "$default"
+    elif [[ "$answer" =~ ^[0-9]+$ && "$answer" -ge 1 && "$answer" -le "${#opts[@]}" ]]; then
+      echo "${opts[$((answer - 1))]}"
+    else
+      echo "$answer"
+    fi
   }
 
   # ── Build projects JSON ────────────────────────────────────────────────────
