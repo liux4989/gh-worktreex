@@ -1,0 +1,65 @@
+{
+  "version": 1,
+
+  "default_base": "main",
+
+  "env": {
+    "node": {
+      "mode": "symlink_modules",
+      "base_worktree": "main",
+      "package_manager": "pnpm",
+      "install_cmd": "pnpm install"
+    }
+  },
+
+  "direnv": {
+    "enabled": true,
+    "template": [
+      "layout python ~/.venvs/myproj",
+      "if [ -f ../.env.shared ]; then",
+      "  export $(cat ../.env.shared | xargs)",
+      "fi"
+    ]
+  },
+
+  "projects": [
+    {
+      "name": "web",
+      "root": "apps/web",
+      "node": {
+        "mode": "symlink_modules",
+        "install_cmd": "pnpm install --filter web"
+      },
+      "dotenv": {
+        "mode": "copy_example",
+        "example_file": ".env.example"
+      }
+    },
+    {
+      "name": "api",
+      "root": "apps/api",
+      "python": {
+        "mode": "shared_venv",
+        "path": "~/.venvs/myproj-api",
+        "requirements": "requirements.txt"
+      },
+      "dotenv": {
+        "mode": "shared_parent",
+        "shared_path": "../../../.env.api.shared"
+      }
+    },
+    {
+      "name": "ui",
+      "root": "packages/ui",
+      "node": {
+        "mode": "per_worktree"
+      }
+    }
+  ],
+
+  "hooks": {
+    "post_provision": [
+      "echo \"Worktree ready: $WORKTREEX_PATH (branch: $WORKTREEX_BRANCH)\""
+    ]
+  }
+}

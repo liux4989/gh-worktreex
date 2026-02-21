@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library scripts
+source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/config.sh"
+source "$SCRIPT_DIR/lib/hooks.sh"
+source "$SCRIPT_DIR/lib/provision.sh"
+
+# Globals with defaults
+DRY_RUN=0
+NO_PROVISION=0
+VERBOSE=0
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "Not inside a git repository"
+CONFIG_FILE="${REPO_ROOT}/.github/worktreex.json"
+REPO_NAME="$(basename "$REPO_ROOT")"
+
+# --- Helper functions ---
+
+get_base_worktree() {
+  git worktree list --porcelain | awk '/^worktree /{print $2; exit}'
+}
+
+safe_branch_name() {
+  echo "$1" | sed 's|/|-|g'
+}
+
+# --- Command implementations ---
+
+cmd_new() {
+  local branch="${1:?Usage: gh worktreex new <branch>}"
+  config_load
+
+  local safe_branch
+  safe_branch="$(safe_branch_name "$branch")"
+  local wt_path
+  wt_path="$(dirname "$REPO_ROOT")/${REPO_NAME}-${safe_branch}"
+
+  info "Creating worktree for branch '$branch' at $wt_path"
+
+  # Check if branch already exists
+  if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+    run_cmd git worktree add "$wt_path" "$branch"
+  else
+    run_cmd git worktree add -b "$branch" "$wt_path"
+  fi
+
+  if [[ "$NO_PROVISION" != "1" ]]; then
+    provision_worktree "$wt_path" "$branch"
+  fi
+
+  ok "Worktree ready: $wt_path (branch: $branch)"
+}
+
+cmd_pr() {
+  local pr_number="${1:?Usage: gh worktreex pr <number>}"
+  config_load
+  require_binary gh "Install from: https://cli.github.com"
+
+  local wt_path
+  wt_path="$(dirname "$REPO_ROOT")/${REPO_NAME}-pr-${pr_number}"
+
+  info "Checking out PR #$pr_number into $wt_path"
+
+  # Fetch PR branch name
+  local pr_branch
+  pr_branch="$(gh pr view "$pr_number" --json headRefName -q '.headRefName')" \
+    || die "Failed to fetch PR #$pr_number"
+
+  # Create worktree for the PR branch
+  run_cmd git fetch origin "pull/${pr_number}/head:${pr_branch}" 2>/dev/null || true
+  run_cmd git worktree add "$wt_path" "$pr_branch"
+
+  if [[ "$NO_PROVISION" != "1" ]]; then
+    provision_worktree "$wt_path" "$pr_branch"
+  fi
+
+  ok "PR #$pr_number worktree ready: $wt_path (branch: $pr_branch)"
+}
+
+cmd_sync() {
+  local wt_path="${1:-$(pwd)}"
+  wt_path="$(resolve_path "$wt_path")"
+  config_load
+
+  # Detect branch for the worktree
+  local branch
+  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)" \
+    || die "Not a valid git worktree: $wt_path"
+
+  info "Syncing worktree at $wt_path (branch: $branch)"
+  provision_worktree "$wt_path" "$branch"
+  ok "Sync complete: $wt_path"
+}
+
+cmd_status() {
+  config_load
+  local projects
+  projects="$(config_get_projects)"
+
+  echo ""
+  while IFS= read -r line; do
+    # git worktree list format: <path>  <hash>  [<branch>]  OR  <path>  <hash>  (bare)
+    local wt_path wt_branch
+    wt_path="$(echo "$line" | awk '{print $1}')"
+    wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
+
+    # Skip bare worktrees
+    echo "$line" | grep -q '(bare)' && continue
+
+    echo -e "${BOLD}Worktree: ${wt_path}${RESET}  (${wt_branch})"
+
+    for proj in $projects; do
+      local root
+      root="$(config_get_project_root "$proj")"
+      local proj_path="${wt_path}/${root}"
+      local nm_status="-" env_status="-" venv_status="-"
+
+      # node_modules status
+      if config_has_node "$proj"; then
+        if [[ -L "${proj_path}/node_modules" ]]; then
+          nm_status="$(echo -e "${GREEN}linked${RESET}")"
+        elif [[ -d "${proj_path}/node_modules" ]]; then
+          nm_status="$(echo -e "${GREEN}directory${RESET}")"
+        else
+          nm_status="$(echo -e "${RED}missing${RESET}")"
+        fi
+      fi
+
+      # .venv status
+      if config_has_python "$proj"; then
+        if [[ -L "${proj_path}/.venv" ]]; then
+          venv_status="$(echo -e "${GREEN}shared${RESET}")"
+        elif [[ -d "${proj_path}/.venv" ]]; then
+          venv_status="$(echo -e "${GREEN}directory${RESET}")"
+        else
+          venv_status="$(echo -e "${RED}missing${RESET}")"
+        fi
+      fi
+
+      # .env status
+      if config_has_dotenv "$proj"; then
+        if [[ -L "${proj_path}/.env" ]]; then
+          env_status="$(echo -e "${GREEN}linked${RESET}")"
+        elif [[ -f "${proj_path}/.env" ]]; then
+          env_status="$(echo -e "${GREEN}copied${RESET}")"
+        else
+          env_status="$(echo -e "${RED}missing${RESET}")"
+        fi
+      fi
+
+      local detail=""
+      config_has_node "$proj" && detail+="  node_modules: ${nm_status}"
+      config_has_python "$proj" && detail+="  .venv: ${venv_status}"
+      config_has_dotenv "$proj" && detail+="  .env: ${env_status}"
+
+      echo -e "  ${BOLD}${proj}${RESET}  [${root}]${detail}"
+    done
+    echo ""
+  done < <(git worktree list)
+}
+
+cmd_list() {
+  config_load
+  local projects
+  projects="$(config_get_projects)"
+
+  echo ""
+  while IFS= read -r line; do
+    local wt_path wt_branch
+    wt_path="$(echo "$line" | awk '{print $1}')"
+    wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
+
+    # Skip bare worktrees
+    echo "$line" | grep -q '(bare)' && continue
+
+    local summary=""
+    for proj in $projects; do
+      local root
+      root="$(config_get_project_root "$proj")"
+      local proj_path="${wt_path}/${root}"
+      local ok_count=0 total=0
+
+      if config_has_node "$proj"; then
+        total=$((total + 1))
+        [[ -d "${proj_path}/node_modules" || -L "${proj_path}/node_modules" ]] && ok_count=$((ok_count + 1))
+      fi
+      if config_has_python "$proj"; then
+        total=$((total + 1))
+        [[ -d "${proj_path}/.venv" || -L "${proj_path}/.venv" ]] && ok_count=$((ok_count + 1))
+      fi
+      if config_has_dotenv "$proj"; then
+        total=$((total + 1))
+        [[ -f "${proj_path}/.env" || -L "${proj_path}/.env" ]] && ok_count=$((ok_count + 1))
+      fi
+
+      if [[ "$total" -gt 0 ]]; then
+        summary+=" ${proj}(${ok_count}/${total})"
+      fi
+    done
+
+    echo -e "${wt_path}  ${CYAN}${wt_branch}${RESET} ${summary}"
+  done < <(git worktree list)
+  echo ""
+}
+
+cmd_rm() {
+  local target="${1:?Usage: gh worktreex rm <path|branch>}"
+
+  # If target looks like a branch name, find its worktree path
+  local wt_path="$target"
+  if [[ ! -d "$target" ]]; then
+    wt_path="$(git worktree list --porcelain | awk -v b="$target" '
+      /^worktree /{wt=$2}
+      /^branch /{if ($2 == "refs/heads/"b) print wt}
+    ')"
+    [[ -z "$wt_path" ]] && die "No worktree found for '$target'"
+  fi
+
+  wt_path="$(resolve_path "$wt_path")"
+
+  # Detect the branch
+  local branch
+  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null)" || true
+
+  info "Removing worktree at $wt_path"
+  run_cmd git worktree remove --force "$wt_path"
+
+  if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
+    echo -n "Delete branch '$branch'? [y/N] "
+    read -r answer
+    if [[ "$answer" =~ ^[Yy] ]]; then
+      run_cmd git branch -D "$branch"
+      ok "Branch '$branch' deleted"
+    fi
+  fi
+
+  ok "Worktree removed: $wt_path"
+}
+
+cmd_clean() {
+  info "Pruning stale worktrees..."
+  run_cmd git worktree prune
+
+  local default_base
+  default_base="$(config_get_default_base 2>/dev/null || echo "main")"
+
+  # Find worktrees on merged branches
+  while IFS= read -r line; do
+    local wt_path wt_branch
+    wt_path="$(echo "$line" | awk '{print $1}')"
+    wt_branch="$(echo "$line" | awk '{print $2}' | tr -d '[]')"
+
+    [[ "$wt_branch" == "$default_base" ]] && continue
+    [[ -z "$wt_branch" ]] && continue
+
+    # Check if branch is merged into default_base
+    if git branch --merged "$default_base" 2>/dev/null | grep -q "^\s*${wt_branch}$"; then
+      echo -n "Branch '$wt_branch' is merged. Remove worktree at $wt_path? [y/N] "
+      read -r answer
+      if [[ "$answer" =~ ^[Yy] ]]; then
+        run_cmd git worktree remove --force "$wt_path"
+        run_cmd git branch -d "$wt_branch"
+        ok "Removed: $wt_path ($wt_branch)"
+      fi
+    fi
+  done < <(git worktree list)
+
+  ok "Clean complete"
+}
+
+# --- Argument parsing ---
+
+usage() {
+  echo "Usage: gh worktreex <command> [flags]"
+  echo ""
+  echo "Commands:"
+  echo "  init                 Scaffold .github/worktreex.json"
+  echo "  new   <branch>       Create worktree + provision"
+  echo "  pr    <number>       Checkout PR in a worktree + provision"
+  echo "  sync  [path]         Re-provision an existing worktree"
+  echo "  status               Show provisioning state across worktrees"
+  echo "  list                 List worktrees with provisioning summary"
+  echo "  rm    <path|branch>  Remove worktree and clean up"
+  echo "  clean                Remove worktrees for merged branches"
+  echo ""
+  echo "Global flags:"
+  echo "  --no-provision       Skip provisioning"
+  echo "  --dry-run            Print what would be done"
+  echo "  --config <file>      Path to config file"
+  echo "  -v, --verbose        Verbose output"
+}
+
+# Parse global flags
+ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-provision) NO_PROVISION=1; shift ;;
+    --dry-run)      DRY_RUN=1; shift ;;
+    --config)       CONFIG_FILE="$2"; shift 2 ;;
+    -v|--verbose)   VERBOSE=1; shift ;;
+    -h|--help)      usage; exit 0 ;;
+    *)              ARGS+=("$1"); shift ;;
+  esac
+done
+
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+
+COMMAND="${1:-}"
+shift || true
+
+case "$COMMAND" in
+  init)
+    if [[ -f "$SCRIPT_DIR/lib/init.sh" ]]; then
+      source "$SCRIPT_DIR/lib/init.sh"
+      cmd_init "$@"
+    else
+      die "init.sh not found"
+    fi
+    ;;
+  new)    cmd_new "$@" ;;
+  pr)     cmd_pr "$@" ;;
+  sync)   cmd_sync "$@" ;;
+  status) cmd_status "$@" ;;
+  list)   cmd_list "$@" ;;
+  rm)     cmd_rm "$@" ;;
+  clean)  cmd_clean "$@" ;;
+  "")     usage; exit 1 ;;
+  *)      die "Unknown command: $COMMAND. Run 'gh worktreex --help' for usage." ;;
+esac
