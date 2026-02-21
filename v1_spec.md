@@ -195,8 +195,8 @@ Triggered when a project entry contains a `node:` block.
 
 | Mode | Mechanism | Trade-offs |
 |---|---|---|
-| `symlink_modules` | `ln -s <base_wt>/<root>/node_modules <new_wt>/<root>/node_modules` | Instant, zero disk cost; all worktrees share the same install |
-| `per_worktree` | Run `install_cmd` inside the new worktree's project root | Fully isolated; slower on first create |
+| `symlink_modules` | `ln -s <base_wt>/<root>/node_modules <new_wt>/<root>/node_modules` | Instant, zero disk cost; all worktrees share the same install. **Not recommended for pnpm.** |
+| `per_worktree` | Run `install_cmd` inside the new worktree's project root | Fully isolated. Fast for pnpm (hardlinks from store); slower for npm/yarn. |
 
 **`symlink_modules` steps:**
 ```
@@ -211,10 +211,11 @@ Triggered when a project entry contains a `node:` block.
 **`per_worktree` steps:**
 ```
 1. cd <new_wt>/<root>
-2. Run install_cmd (e.g. "pnpm install --filter web")
+2. Run install_cmd (e.g. "pnpm install --frozen-lockfile")
 ```
 
-> **pnpm note:** pnpm stores packages in a content-addressable store (`~/.pnpm-store`). Symlinking `node_modules/` works because pnpm's `node_modules` is itself a tree of symlinks into the store — safe to share across worktrees.
+> **pnpm default — `per_worktree` with `--frozen-lockfile`:**
+> pnpm maintains a global content-addressable store (`~/.pnpm-store`) and hardlinks package files into each `node_modules/`. Running `pnpm install --frozen-lockfile` in a new worktree is therefore nearly instant (no network, no re-extraction) and produces a fully isolated, correct `node_modules/` with its own virtual store (`.pnpm/`) scoped to that worktree. Symlinking pnpm's `node_modules/` across worktrees is **unsafe**: the virtual store (`.pnpm/`) contains worktree-relative symlinks that break when the path changes. `init` automatically sets `mode: per_worktree` and `install_cmd: pnpm install --frozen-lockfile` whenever `pnpm-lock.yaml` is detected.
 
 #### Build cache
 
@@ -371,10 +372,13 @@ hooks:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `mode` | string | `symlink_modules` | Default Node.js provisioning mode. |
-| `base_worktree` | string | `main` | Which worktree's `node_modules` to symlink from. |
-| `package_manager` | string | auto | `npm` / `yarn` / `pnpm` / `bun`. |
-| `install_cmd` | string | `<pm> install` | Install command used when mode is `per_worktree`. |
+| `mode` | string | `symlink_modules` ¹ | Default Node.js provisioning mode. |
+| `base_worktree` | string | `main` | Which worktree's `node_modules` to symlink from (only used by `symlink_modules`). |
+| `package_manager` | string | auto | `npm` / `yarn` / `pnpm` / `bun`. Auto-detected from lockfile by `init`. |
+| `install_cmd` | string | `<pm> install` ² | Install command used when mode is `per_worktree`. |
+
+> ¹ **pnpm exception:** when `package_manager: pnpm` is set (or auto-detected), `init` writes `mode: per_worktree` regardless of the repo-wide default. `symlink_modules` is never set automatically for pnpm.
+> ² **pnpm exception:** `init` sets `install_cmd: pnpm install --frozen-lockfile` for pnpm projects. The `--frozen-lockfile` flag prevents lockfile mutation in worktree branches, and the install is fast because pnpm hardlinks packages from `~/.pnpm-store`.
 
 #### `direnv` keys
 
@@ -547,7 +551,7 @@ gh-worktreex/
 ## 12. Open Questions
 
 1. **`yq` as hard dependency:** Cleanest YAML parser available in bash. Alternatives: bundle a minimal awk-based parser (fragile) or switch to JSON config (loses familiarity). Recommendation: require `yq`, print a clear install message when absent.
-2. **pnpm with `symlink_modules`:** pnpm's `node_modules/` is a tree of symlinks into `~/.pnpm-store`. Symlinking the whole directory should work but may emit warnings. Should we explicitly test and document this, or default pnpm projects to `per_worktree` in `init`?
+2. ~~**pnpm with `symlink_modules`**~~ **Resolved:** pnpm defaults to `per_worktree` + `pnpm install --frozen-lockfile`. Symlinking pnpm's `node_modules/` is unsafe because its virtual store (`.pnpm/`) contains worktree-relative paths. `init` auto-sets `mode: per_worktree` and `install_cmd: pnpm install --frozen-lockfile` on pnpm detection. This is fast due to hardlinking from `~/.pnpm-store`.
 3. **`init --force` backup:** Should overwriting an existing config also write a `.worktreex.yml.bak` to prevent accidental loss?
 4. **Config location:** `.worktreex.yml` at repo root is discoverable. `.github/worktreex.yml` is cleaner for repos with strict root conventions. Support both locations with root taking precedence?
 5. **`sync` scope:** Should `sync` re-provision all worktrees or only the specified one? Current decision: one worktree at a time (safer, explicit).
