@@ -45,6 +45,7 @@ cmd_init() {
     -not -path "*/node_modules/*" \
     -not -path "*/.git/*" \
     -not -path "*/dist/*" \
+    -not -path "*/.*/*" \
     2>/dev/null | sort)
 
   # Find python project files
@@ -54,6 +55,7 @@ cmd_init() {
   done < <(find "$repo_root" \
     \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "requirements*.txt" \) \
     -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/.venv/*" \
+    -not -path "*/.*/*" \
     2>/dev/null | sort)
 
   # Collect node project roots
