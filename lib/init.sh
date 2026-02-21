@@ -53,7 +53,7 @@ cmd_init() {
   while IFS= read -r f; do
     py_files+=("$f")
   done < <(find "$repo_root" \
-    \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "requirements*.txt" \) \
+    \( -name "pyproject.toml" -o -name "requirements.txt" -o -name "requirements*.txt" -o -name "Pipfile" \) \
     -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/.venv/*" \
     -not -path "*/.*/*" \
     2>/dev/null | sort)
@@ -252,15 +252,47 @@ cmd_init() {
     local py_mode
     py_mode="$(prompt_choice "  Python mode" "shared_venv/per_worktree" "shared_venv")"
 
+    # Detect Python package manager
+    local default_py_pm="pip"
+    if [[ -f "$proj_dir/uv.lock" || -f "$repo_root/uv.lock" ]]; then
+      default_py_pm="uv"
+    elif [[ -f "$proj_dir/poetry.lock" || -f "$repo_root/poetry.lock" ]]; then
+      default_py_pm="poetry"
+    elif [[ -f "$proj_dir/Pipfile.lock" || -f "$repo_root/Pipfile.lock" ]]; then
+      default_py_pm="pipenv"
+    fi
+    local py_pm
+    py_pm="$(prompt_choice "  Python package manager" "pip/uv/poetry/pipenv" "$default_py_pm")"
+
     local py_path="" py_reqs=""
     if [[ "$py_mode" == "shared_venv" ]]; then
       py_path="$(prompt_with_default "  Shared venv path" "~/.venvs/${repo_name}-${proj_name}" "Path to shared virtualenv directory")"
     fi
 
-    # Auto-detect requirements file
-    local default_reqs="requirements.txt"
-    [[ -f "$proj_dir/requirements/base.txt" ]] && default_reqs="requirements/base.txt"
-    py_reqs="$(prompt_with_default "  Requirements file" "$default_reqs" "Path to pip requirements file")"
+    # Auto-detect install command / requirements
+    local default_install_cmd="" default_reqs=""
+    case "$py_pm" in
+      uv)
+        default_install_cmd="uv sync"
+        default_reqs="pyproject.toml"
+        ;;
+      poetry)
+        default_install_cmd="poetry install"
+        default_reqs="pyproject.toml"
+        ;;
+      pipenv)
+        default_install_cmd="pipenv install"
+        default_reqs="Pipfile"
+        ;;
+      *)
+        default_install_cmd="pip install -r requirements.txt"
+        default_reqs="requirements.txt"
+        [[ -f "$proj_dir/requirements/base.txt" ]] && default_reqs="requirements/base.txt"
+        ;;
+    esac
+    local py_install_cmd
+    py_install_cmd="$(prompt_with_default "  Install command" "$default_install_cmd" "Command to install dependencies")"
+    py_reqs="$(prompt_with_default "  Dependencies file" "$default_reqs" "Path to dependency definition file")"
 
     local dot_mode
     dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip")"
@@ -275,16 +307,18 @@ cmd_init() {
     proj_json="$(jq -n \
       --arg name "$proj_name" \
       --arg root "$rel_root" \
+      --arg py_pm "$py_pm" \
       --arg py_mode "$py_mode" \
       --arg py_path "$py_path" \
       --arg py_reqs "$py_reqs" \
+      --arg py_install_cmd "$py_install_cmd" \
       --arg dot_mode "$dot_mode" \
       --arg dot_example "$dot_example" \
       --arg dot_shared "$dot_shared" \
       '{
         name: $name,
         root: $root,
-        python: {mode: $py_mode}
+        python: {mode: $py_mode, package_manager: $py_pm, install_cmd: $py_install_cmd}
           + (if $py_path != "" then {path: $py_path} else {} end)
           + (if $py_reqs != "" then {requirements: $py_reqs} else {} end),
         dotenv: (if $dot_mode != "skip" and $dot_mode != "" then
