@@ -129,7 +129,7 @@ cmd_init() {
   }
 
   prompt_choice() {
-    local question="$1" choices="$2" default="$3"
+    local question="$1" choices="$2" default="$3" tip="${4:-}"
     if [[ "$yes_mode" == "1" ]]; then
       echo "$default"
       return
@@ -144,6 +144,7 @@ cmd_init() {
       [[ "$opt" == "$default" ]] && default_idx=$idx
     done
     echo "$question:" >&2
+    [[ -n "$tip" ]] && echo "    💡 $tip" >&2
     for i in "${!opts[@]}"; do
       local num=$((i + 1))
       if [[ "${opts[$i]}" == "$default" ]]; then
@@ -197,7 +198,8 @@ cmd_init() {
     fi
 
     local node_mode
-    node_mode="$(prompt_choice "  Node mode" "symlink_modules/per_worktree" "$default_node_mode")"
+    node_mode="$(prompt_choice "  Node mode" "symlink_modules/per_worktree" "$default_node_mode" \
+      "symlink_modules: share node_modules via symlink (saves disk). per_worktree: separate install per worktree (required for pnpm).")"
 
     local default_install_cmd="$pm install"
     if [[ "$pm" == "pnpm" ]]; then
@@ -207,7 +209,8 @@ cmd_init() {
     install_cmd="$(prompt_with_default "  Install command" "$default_install_cmd" "Command to install dependencies")"
 
     local dot_mode
-    dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip")"
+    dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip" \
+      "copy_example: copy .env.example to .env. copy: copy .env from main worktree. shared_parent: symlink from parent dir. skip: no .env handling.")"
 
     local dot_example="" dot_shared=""
     if [[ "$dot_mode" == "copy_example" ]]; then
@@ -264,7 +267,8 @@ cmd_init() {
     info "Configure project \"$proj_name\" ($rel_root):"
 
     local py_mode
-    py_mode="$(prompt_choice "  Python mode" "shared_venv/per_worktree" "shared_venv")"
+    py_mode="$(prompt_choice "  Python mode" "shared_venv/per_worktree" "shared_venv" \
+      "shared_venv: all worktrees share one virtualenv (saves disk). per_worktree: each worktree gets its own venv.")"
 
     # Detect Python package manager
     local default_py_pm="pip"
@@ -309,7 +313,8 @@ cmd_init() {
     py_reqs="$(prompt_with_default "  Dependencies file" "$default_reqs" "Path to dependency definition file")"
 
     local dot_mode
-    dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip")"
+    dot_mode="$(prompt_choice "  Dotenv mode" "copy_example/copy/shared_parent/skip" "skip" \
+      "copy_example: copy .env.example to .env. copy: copy .env from main worktree. shared_parent: symlink from parent dir. skip: no .env handling.")"
     local dot_example="" dot_shared=""
     if [[ "$dot_mode" == "copy_example" ]]; then
       dot_example="$(prompt_with_default "  Example file" ".env.example" "Path to .env template file")"
