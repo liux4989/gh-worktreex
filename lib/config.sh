@@ -128,7 +128,7 @@ config_get_agent_paths() {
 }
 
 config_get_agent_excludes() {
-  jq -r '(.agent.exclude // [])[]' "$CONFIG_FILE"
+  jq -r '(.agent.exclude // .agent.excludes // [])[]' "$CONFIG_FILE"
 }
 
 # Hooks
