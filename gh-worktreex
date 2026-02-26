@@ -124,105 +124,56 @@ cmd_pr() {
 }
 
 cmd_sync() {
-  local sync_all=0
-  local target=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --all|-a) sync_all=1; shift ;;
-      -h|--help)
-        echo "Usage: gh worktreex sync <target-path|target-branch>"
-        echo "       gh worktreex sync --all"
-        return 0
-        ;;
-      *)
-        [[ -n "$target" ]] && die "Usage: gh worktreex sync <target-path|target-branch> | --all"
-        target="$1"
-        shift
-        ;;
-    esac
-  done
+  [[ $# -le 1 ]] || die "Usage: gh worktreex sync [source-path|source-branch]"
 
-  if [[ "$sync_all" != "1" && -z "$target" ]]; then
-    die "Usage: gh worktreex sync <target-path|target-branch> (or --all)"
-  fi
-
-  local current_wt
+  local source_input="${1:-}"
+  local current_wt current_branch
   current_wt="$(resolve_git_worktree_path "$(pwd)")"
+  git -C "$current_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || die "Current directory is not a git worktree: $current_wt"
+  current_branch="$(git -C "$current_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+
   config_load
 
-  # Sync must be initiated from the base worktree.
-  local default_base base_wt
+  local default_base source_wt
   default_base="$(config_get_default_base)"
-  base_wt="$(find_worktree_for_branch "$default_base" || true)"
-  [[ -z "$base_wt" ]] && base_wt="$(resolve_git_worktree_path "$(git rev-parse --show-toplevel)")"
-  if [[ "$current_wt" != "$base_wt" ]]; then
-    # Fallback: in edge cases, path representations differ but gitdir is the same.
-    local wt_git_dir base_git_dir
-    wt_git_dir="$(git -C "$current_wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
-    base_git_dir="$(git -C "$base_wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
-    if [[ -z "$wt_git_dir" || -z "$base_git_dir" || "$wt_git_dir" != "$base_git_dir" ]]; then
-      die "Sync must be run from the base worktree ($default_base)."
-    fi
-  fi
+  source_wt="$(find_worktree_for_branch "$default_base" || true)"
+  [[ -z "$source_wt" ]] && source_wt="$(resolve_git_worktree_path "$(git rev-parse --show-toplevel)")"
 
-  if [[ "$sync_all" == "1" ]]; then
-    info "Syncing all worktrees from base: $base_wt ($default_base)"
-  else
-    local target_wt=""
-    if [[ -d "$target" ]]; then
-      target_wt="$(resolve_git_worktree_path "$target")"
+  if [[ -n "$source_input" ]]; then
+    if [[ -d "$source_input" ]]; then
+      source_wt="$(resolve_git_worktree_path "$source_input")"
+      git -C "$source_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || die "Source is not a valid git worktree: $source_wt"
     else
-      target_wt="$(find_worktree_for_branch "$target" || true)"
-      [[ -z "$target_wt" ]] && die "No worktree found for target '$target'"
+      source_wt="$(find_worktree_for_branch "$source_input" || true)"
+      [[ -z "$source_wt" ]] && die "No worktree found for source '$source_input'"
     fi
-    git -C "$target_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-      || die "Target is not a valid git worktree: $target_wt"
-
-    local in_worktree_list=0
-    while IFS= read -r line; do
-      echo "$line" | grep -q '(bare)' && continue
-      local listed_raw listed
-      listed_raw="$(echo "$line" | awk '{print $1}')"
-      listed="$(resolve_git_worktree_path "$listed_raw")"
-      if [[ "$listed" == "$target_wt" ]]; then
-        in_worktree_list=1
-        break
-      fi
-    done < <(git worktree list)
-    [[ "$in_worktree_list" == "1" ]] || die "Target is not an attached worktree: $target_wt"
-
-    local target_branch
-    target_branch="$(git -C "$target_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
-    [[ "$target_wt" == "$base_wt" ]] && die "Target points to base worktree ($default_base). Use --all or specify a non-base target."
-
-    info "Syncing target worktree from base: $target_wt (branch: $target_branch)"
-    provision_worktree "$target_wt" "$target_branch" "$base_wt"
-    ok "Sync complete: $target_wt"
-    return 0
   fi
 
+  local in_worktree_list=0
   while IFS= read -r line; do
-    local line_wt_raw line_wt line_branch
-    line_wt_raw="$(echo "$line" | awk '{print $1}')"
-    line_wt="$(resolve_git_worktree_path "$line_wt_raw")"
-    line_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
-
-    # Skip bare worktrees
     echo "$line" | grep -q '(bare)' && continue
-    # Skip base worktree to avoid self-referential provisioning (e.g. symlinking
-    # node_modules to itself in symlink_modules mode).
-    [[ "$line_wt" == "$base_wt" ]] && continue
-
-    # Resolve branch if missing
-    if [[ -z "$line_branch" || "$line_branch" == "HEAD" ]]; then
-      line_branch="$(git -C "$line_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+    local listed_raw listed
+    listed_raw="$(echo "$line" | awk '{print $1}')"
+    listed="$(resolve_git_worktree_path "$listed_raw")"
+    if [[ "$listed" == "$source_wt" ]]; then
+      in_worktree_list=1
+      break
     fi
-
-    info "Syncing worktree at $line_wt (branch: $line_branch)"
-    provision_worktree "$line_wt" "$line_branch" "$base_wt"
   done < <(git worktree list)
+  [[ "$in_worktree_list" == "1" ]] || die "Source is not an attached worktree: $source_wt"
 
-  ok "Sync complete: all worktrees"
+  [[ "$source_wt" == "$current_wt" ]] && die "Source and target are the same worktree: $current_wt"
+
+  local source_branch
+  source_branch="$(git -C "$source_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+
+  info "Syncing current worktree from source:"
+  info "  target: $current_wt (branch: $current_branch)"
+  info "  source: $source_wt (branch: $source_branch)"
+  provision_worktree "$current_wt" "$current_branch" "$source_wt"
+  ok "Sync complete: $current_wt"
 }
 
 cmd_status() {
@@ -474,7 +425,7 @@ usage() {
   echo "  add  [-f] [-b <branch>] <path> [<commit-ish>]"
   echo "                                    Create worktree + provision"
   echo "  pr   <number>                     Checkout PR in a worktree + provision"
-  echo "  sync <path|branch> | --all        Re-provision one target worktree (or all)"
+  echo "  sync [source-path|source-branch]  Re-provision current worktree from source"
   echo "  list                              List worktrees with provisioning summary"
   echo "  status                            Show provisioning state across worktrees"
   echo "  remove [-f] <path|branch>         Remove worktree and clean up (alias: rm)"
