@@ -51,3 +51,55 @@ require_binary() {
   local bin="$1" install_hint="${2:-}"
   command -v "$bin" &>/dev/null || die "'$bin' not found.${install_hint:+ $install_hint}"
 }
+
+# Resolve a path emitted by `git worktree list` to an actual filesystem worktree.
+# Some repos (notably submodules/worktree hybrids) can surface gitdir paths like
+# `.git/modules/<name>` instead of the checkout root.
+resolve_git_worktree_path() {
+  local p="$1"
+  p="$(resolve_path "$p")"
+
+  local top
+  top="$(git -C "$p" rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$top" ]]; then
+    resolve_path "$top"
+    return
+  fi
+
+  local core_wt
+  core_wt="$(git --git-dir="$p" config --get core.worktree 2>/dev/null || true)"
+  if [[ -n "$core_wt" ]]; then
+    if [[ "$core_wt" == /* ]]; then
+      resolve_path "$core_wt"
+    else
+      resolve_path "$p/$core_wt"
+    fi
+    return
+  fi
+
+  echo "$p"
+}
+
+# Find the worktree path for a local branch from `git worktree list --porcelain`.
+find_worktree_for_branch() {
+  local target_branch="$1"
+  local wt_path=""
+
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *)
+        wt_path="${line#worktree }"
+        ;;
+      branch\ refs/heads/*)
+        local b
+        b="${line#branch refs/heads/}"
+        if [[ "$b" == "$target_branch" ]]; then
+          resolve_git_worktree_path "$wt_path"
+          return 0
+        fi
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+
+  return 1
+}

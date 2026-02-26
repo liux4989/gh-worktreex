@@ -22,8 +22,8 @@ provision_worktree() {
     local default_base
     default_base="$(config_get_default_base)"
     # Find the worktree with that branch
-    base_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$default_base" '/^worktree /{p=$2} $0=="branch "b{print p; exit}')"
-    [[ -z "$base_wt" ]] && base_wt="$(git rev-parse --show-toplevel)"
+    base_wt="$(find_worktree_for_branch "$default_base" || true)"
+    [[ -z "$base_wt" ]] && base_wt="$(resolve_git_worktree_path "$(git rev-parse --show-toplevel)")"
   fi
 
   local projects provisioned_names=""

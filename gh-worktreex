@@ -125,16 +125,22 @@ cmd_pr() {
 
 cmd_sync() {
   local wt_path="${1:-$(pwd)}"
-  wt_path="$(resolve_path "$wt_path")"
+  wt_path="$(resolve_git_worktree_path "$wt_path")"
   config_load
 
   # Sync must be initiated from the base worktree.
   local default_base base_wt
   default_base="$(config_get_default_base)"
-  base_wt="$(git worktree list --porcelain | awk -v b="refs/heads/$default_base" '/^worktree /{p=$2} $0=="branch "b{print p; exit}')"
-  [[ -z "$base_wt" ]] && base_wt="$(git rev-parse --show-toplevel)"
+  base_wt="$(find_worktree_for_branch "$default_base" || true)"
+  [[ -z "$base_wt" ]] && base_wt="$(resolve_git_worktree_path "$(git rev-parse --show-toplevel)")"
   if [[ "$wt_path" != "$base_wt" ]]; then
-    die "Sync must be run from the base worktree ($default_base)."
+    # Fallback: in edge cases, path representations differ but gitdir is the same.
+    local wt_git_dir base_git_dir
+    wt_git_dir="$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    base_git_dir="$(git -C "$base_wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    if [[ -z "$wt_git_dir" || -z "$base_git_dir" || "$wt_git_dir" != "$base_git_dir" ]]; then
+      die "Sync must be run from the base worktree ($default_base)."
+    fi
   fi
 
   info "Syncing all worktrees from base: $base_wt ($default_base)"
