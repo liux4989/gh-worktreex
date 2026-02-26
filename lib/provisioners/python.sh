@@ -61,7 +61,7 @@ provision_python() {
       fi
 
       if [[ "$has_build_system" == "1" ]]; then
-        run_cmd "$venv_dir/bin/pip" install -e ".[dev]" --quiet
+        run_cmd bash -c "cd '$new_proj' && '$venv_dir/bin/pip' install -e '.[dev]' --quiet"
       elif [[ -n "$requirements" && -f "$new_proj/$requirements" ]]; then
         run_cmd "$venv_dir/bin/pip" install -r "$new_proj/$requirements" --quiet
       fi

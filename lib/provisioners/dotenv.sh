@@ -38,6 +38,10 @@ provision_dotenv() {
         warn "Base .env not found at $base_env — skipping"
         return 0
       fi
+      if [[ "$(resolve_path "$base_env")" == "$(resolve_path "$dest")" ]]; then
+        step ".env already points at base worktree file — skipping copy"
+        return 0
+      fi
       run_cmd cp "$base_env" "$dest"
       ok ".env copied from base worktree"
       ;;

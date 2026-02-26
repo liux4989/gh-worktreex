@@ -39,10 +39,11 @@ provision_worktree() {
 
     # Node provisioner
     if config_has_node "$proj_name"; then
-      local node_mode install_cmd
+      local node_mode install_cmd node_pm
       node_mode="$(config_get_node_mode "$proj_name")"
       install_cmd="$(config_get_node_install_cmd "$proj_name")"
-      provision_node "$new_wt" "$proj_root" "$node_mode" "$install_cmd" "$base_wt"
+      node_pm="$(config_get_node_pm "$proj_name")"
+      provision_node "$new_wt" "$proj_root" "$node_mode" "$install_cmd" "$node_pm" "$base_wt"
       did_something=1
     fi
 
@@ -89,8 +90,26 @@ provision_worktree() {
       [[ -n "$e" ]] && agent_excludes+=("$e")
     done < <(config_get_agent_excludes)
 
-    provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}" --exclude "${agent_excludes[@]}"
+    if [[ ${#agent_excludes[@]} -gt 0 ]]; then
+      provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}" --exclude "${agent_excludes[@]}"
+    else
+      provision_agent_assets "$new_wt" "$base_wt" "$agent_mode" "${agent_paths[@]}"
+    fi
   fi
+
+  # Post-provision sanity check: only validate configured Node projects.
+  for proj_name in $projects; do
+    config_has_node "$proj_name" || continue
+    local proj_root pkg_dir rel_dir
+    proj_root="$(config_get_project_root "$proj_name")"
+    pkg_dir="$new_wt/$proj_root"
+    [[ -f "$pkg_dir/package.json" ]] || continue
+    if [[ ! -d "$pkg_dir/node_modules" && ! -L "$pkg_dir/node_modules" ]]; then
+      rel_dir="${pkg_dir#$new_wt/}"
+      [[ "$pkg_dir" == "$new_wt" ]] && rel_dir="."
+      warn "node_modules missing for configured Node project '$proj_name' at '$rel_dir'. Check node mode/install_cmd in worktreex.json, or run your package manager manually."
+    fi
+  done
 
   # Post-provision hooks
   hooks_run_post_provision "$new_wt" "$branch" "$base_wt" "${provisioned_names# }"

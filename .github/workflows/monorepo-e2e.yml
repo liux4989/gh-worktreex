@@ -1,0 +1,21 @@
+name: Monorepo E2E
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  monorepo-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Run monorepo e2e demo
+        run: |
+          chmod +x gh-worktreex
+          chmod +x demo/real-monorepo-fixture/run-e2e.sh
+          demo/real-monorepo-fixture/run-e2e.sh

@@ -84,7 +84,14 @@ cmd_add() {
   fi
 
   if [[ "$NO_PROVISION" != "1" ]]; then
+    local _wt_for_cleanup="$wt_path"
+    _cleanup_worktree_on_err() {
+      warn "Provisioning failed; removing created worktree at '$_wt_for_cleanup'"
+      git worktree remove --force "$_wt_for_cleanup" 2>/dev/null || true
+    }
+    trap _cleanup_worktree_on_err ERR
     provision_worktree "$wt_path" "$branch"
+    trap - ERR
   fi
 
   ok "Worktree ready: $wt_path (branch: $branch)"
@@ -139,6 +146,9 @@ cmd_sync() {
 
     # Skip bare worktrees
     echo "$line" | grep -q '(bare)' && continue
+    # Skip base worktree to avoid self-referential provisioning (e.g. symlinking
+    # node_modules to itself in symlink_modules mode).
+    [[ "$line_wt" == "$base_wt" ]] && continue
 
     # Resolve branch if missing
     if [[ -z "$line_branch" || "$line_branch" == "HEAD" ]]; then
