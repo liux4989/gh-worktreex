@@ -8,6 +8,7 @@ provision_agent_assets() {
 
   local -a paths=()
   local -a excludes=()
+  local excludes_count=0
   local in_excludes=0
   local arg
   for arg in "$@"; do
@@ -17,6 +18,7 @@ provision_agent_assets() {
     fi
     if [[ "$in_excludes" == "1" ]]; then
       excludes+=("$arg")
+      excludes_count=$((excludes_count + 1))
     else
       paths+=("$arg")
     fi
@@ -30,7 +32,7 @@ provision_agent_assets() {
   _exclude_exact() {
     local rel="$1"
     local ex
-    for ex in "${excludes[@]}"; do
+    for ex in "${excludes[@]-}"; do
       [[ "$ex" == "$rel" ]] && return 0
     done
     return 1
@@ -39,7 +41,7 @@ provision_agent_assets() {
   _exclude_under() {
     local rel="$1"
     local ex
-    for ex in "${excludes[@]}"; do
+    for ex in "${excludes[@]-}"; do
       [[ "$ex" == "$rel" || "$ex" == "$rel/"* ]] && return 0
     done
     return 1
@@ -95,9 +97,9 @@ provision_agent_assets() {
       copy)
         [[ -L "$dst" || -e "$dst" ]] && run_cmd rm -rf "$dst"
         run_cmd cp -R "$src" "$dst"
-        if [[ -d "$src" && ${#excludes[@]} -gt 0 ]]; then
+        if [[ -d "$src" && "$excludes_count" -gt 0 ]]; then
           local ex
-          for ex in "${excludes[@]}"; do
+          for ex in "${excludes[@]-}"; do
             if [[ "$ex" == "$rel_path" || "$ex" == "$rel_path/"* ]]; then
               local ex_rel="${ex#$rel_path/}"
               [[ "$ex" == "$rel_path" ]] && continue

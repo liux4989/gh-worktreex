@@ -146,8 +146,9 @@ cmd_sync() {
   info "Syncing all worktrees from base: $base_wt ($default_base)"
 
   while IFS= read -r line; do
-    local line_wt line_branch
-    line_wt="$(echo "$line" | awk '{print $1}')"
+    local line_wt_raw line_wt line_branch
+    line_wt_raw="$(echo "$line" | awk '{print $1}')"
+    line_wt="$(resolve_git_worktree_path "$line_wt_raw")"
     line_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
 
     # Skip bare worktrees
@@ -176,8 +177,9 @@ cmd_status() {
   echo ""
   while IFS= read -r line; do
     # git worktree list format: <path>  <hash>  [<branch>]  OR  <path>  <hash>  (bare)
-    local wt_path wt_branch
-    wt_path="$(echo "$line" | awk '{print $1}')"
+    local wt_raw wt_path wt_branch
+    wt_raw="$(echo "$line" | awk '{print $1}')"
+    wt_path="$(resolve_git_worktree_path "$wt_raw")"
     wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
 
     # Skip bare worktrees
@@ -276,8 +278,9 @@ cmd_list() {
 
   echo ""
   while IFS= read -r line; do
-    local wt_path wt_branch
-    wt_path="$(echo "$line" | awk '{print $1}')"
+    local wt_raw wt_path wt_branch
+    wt_raw="$(echo "$line" | awk '{print $1}')"
+    wt_path="$(resolve_git_worktree_path "$wt_raw")"
     wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
 
     # Skip bare worktrees
@@ -382,9 +385,10 @@ cmd_prune() {
 
   # Find worktrees on merged branches
   while IFS= read -r line; do
-    local wt_path wt_branch
-    wt_path="$(echo "$line" | awk '{print $1}')"
-    wt_branch="$(echo "$line" | awk '{print $2}' | tr -d '[]')"
+    local wt_raw wt_path wt_branch
+    wt_raw="$(echo "$line" | awk '{print $1}')"
+    wt_path="$(resolve_git_worktree_path "$wt_raw")"
+    wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
 
     [[ "$wt_branch" == "$default_base" ]] && continue
     [[ -z "$wt_branch" ]] && continue
