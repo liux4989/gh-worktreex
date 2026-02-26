@@ -124,8 +124,30 @@ cmd_pr() {
 }
 
 cmd_sync() {
-  local wt_path="${1:-$(pwd)}"
-  wt_path="$(resolve_git_worktree_path "$wt_path")"
+  local sync_all=0
+  local target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all|-a) sync_all=1; shift ;;
+      -h|--help)
+        echo "Usage: gh worktreex sync <target-path|target-branch>"
+        echo "       gh worktreex sync --all"
+        return 0
+        ;;
+      *)
+        [[ -n "$target" ]] && die "Usage: gh worktreex sync <target-path|target-branch> | --all"
+        target="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$sync_all" != "1" && -z "$target" ]]; then
+    die "Usage: gh worktreex sync <target-path|target-branch> (or --all)"
+  fi
+
+  local current_wt
+  current_wt="$(resolve_git_worktree_path "$(pwd)")"
   config_load
 
   # Sync must be initiated from the base worktree.
@@ -133,17 +155,51 @@ cmd_sync() {
   default_base="$(config_get_default_base)"
   base_wt="$(find_worktree_for_branch "$default_base" || true)"
   [[ -z "$base_wt" ]] && base_wt="$(resolve_git_worktree_path "$(git rev-parse --show-toplevel)")"
-  if [[ "$wt_path" != "$base_wt" ]]; then
+  if [[ "$current_wt" != "$base_wt" ]]; then
     # Fallback: in edge cases, path representations differ but gitdir is the same.
     local wt_git_dir base_git_dir
-    wt_git_dir="$(git -C "$wt_path" rev-parse --absolute-git-dir 2>/dev/null || true)"
+    wt_git_dir="$(git -C "$current_wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
     base_git_dir="$(git -C "$base_wt" rev-parse --absolute-git-dir 2>/dev/null || true)"
     if [[ -z "$wt_git_dir" || -z "$base_git_dir" || "$wt_git_dir" != "$base_git_dir" ]]; then
       die "Sync must be run from the base worktree ($default_base)."
     fi
   fi
 
-  info "Syncing all worktrees from base: $base_wt ($default_base)"
+  if [[ "$sync_all" == "1" ]]; then
+    info "Syncing all worktrees from base: $base_wt ($default_base)"
+  else
+    local target_wt=""
+    if [[ -d "$target" ]]; then
+      target_wt="$(resolve_git_worktree_path "$target")"
+    else
+      target_wt="$(find_worktree_for_branch "$target" || true)"
+      [[ -z "$target_wt" ]] && die "No worktree found for target '$target'"
+    fi
+    git -C "$target_wt" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+      || die "Target is not a valid git worktree: $target_wt"
+
+    local in_worktree_list=0
+    while IFS= read -r line; do
+      echo "$line" | grep -q '(bare)' && continue
+      local listed_raw listed
+      listed_raw="$(echo "$line" | awk '{print $1}')"
+      listed="$(resolve_git_worktree_path "$listed_raw")"
+      if [[ "$listed" == "$target_wt" ]]; then
+        in_worktree_list=1
+        break
+      fi
+    done < <(git worktree list)
+    [[ "$in_worktree_list" == "1" ]] || die "Target is not an attached worktree: $target_wt"
+
+    local target_branch
+    target_branch="$(git -C "$target_wt" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+    [[ "$target_wt" == "$base_wt" ]] && die "Target points to base worktree ($default_base). Use --all or specify a non-base target."
+
+    info "Syncing target worktree from base: $target_wt (branch: $target_branch)"
+    provision_worktree "$target_wt" "$target_branch" "$base_wt"
+    ok "Sync complete: $target_wt"
+    return 0
+  fi
 
   while IFS= read -r line; do
     local line_wt_raw line_wt line_branch
@@ -418,7 +474,7 @@ usage() {
   echo "  add  [-f] [-b <branch>] <path> [<commit-ish>]"
   echo "                                    Create worktree + provision"
   echo "  pr   <number>                     Checkout PR in a worktree + provision"
-  echo "  sync [path]                       Re-provision an existing worktree"
+  echo "  sync <path|branch> | --all        Re-provision one target worktree (or all)"
   echo "  list                              List worktrees with provisioning summary"
   echo "  status                            Show provisioning state across worktrees"
   echo "  remove [-f] <path|branch>         Remove worktree and clean up (alias: rm)"
