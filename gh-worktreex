@@ -23,75 +23,134 @@ get_base_worktree() {
   git worktree list --porcelain | awk '/^worktree /{print $2; exit}'
 }
 
-safe_branch_name() {
-  echo "$1" | sed 's|/|-|g'
+extract_add_path_from_args() {
+  # Best-effort parser for `git worktree add` argv to locate <path>.
+  # Falls back gracefully when unknown flags are used.
+  local -a args=("$@")
+  local expect_value=0
+  local i=0
+  local arg
+
+  while [[ "$i" -lt "${#args[@]}" ]]; do
+    arg="${args[$i]}"
+    if [[ "$expect_value" == "1" ]]; then
+      expect_value=0
+      i=$((i + 1))
+      continue
+    fi
+
+    case "$arg" in
+      --)
+        if [[ $((i + 1)) -lt "${#args[@]}" ]]; then
+          echo "${args[$((i + 1))]}"
+          return 0
+        fi
+        return 1
+        ;;
+      -b|-B|--orphan|--reason)
+        expect_value=1
+        ;;
+      -b*|-B*)
+        # Support compact forms like -bfoo / -Bfoo.
+        ;;
+      --lock=*|--*)
+        # Known long flags without positional meaning here.
+        ;;
+      -*)
+        # Unknown short flag; keep scanning for first non-flag argument.
+        ;;
+      *)
+        echo "$arg"
+        return 0
+        ;;
+    esac
+    i=$((i + 1))
+  done
+
+  return 1
+}
+
+list_worktree_paths_porcelain() {
+  git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /, "", $0); print $0}'
 }
 
 # --- Command implementations ---
 
 cmd_add() {
-  # Usage: gh worktreex add [-f] [-b <new-branch>] <path> [<commit-ish>]
-  # Convenience: if only one arg with no path separator, treat as branch and auto-compute path.
-  local new_branch="" force=0
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -b|-B) new_branch="${2:?-b requires a branch name}"; shift 2 ;;
-      -f|--force) force=1; shift ;;
-      *) break ;;
-    esac
-  done
+  local -a add_args=()
+  local known_target_path=""
 
-  local first_arg="${1:?Usage: gh worktreex add [-f] [-b <new-branch>] <path> [<commit-ish>]}"
-  local commit_ish="${2:-}"
-
-  config_load
-
-  local wt_path branch
-  if [[ -n "$commit_ish" ]]; then
-    # Two-arg form: add <path> <commit-ish>
-    wt_path="$first_arg"
-    branch="$commit_ish"
-  elif [[ -n "$new_branch" ]]; then
-    # -b flag: first_arg is <path>, new_branch is the branch to create
-    wt_path="$first_arg"
-    branch="$new_branch"
-  elif [[ "$first_arg" == */* || "$first_arg" == .* ]]; then
-    # Looks like a path; derive branch from last path component (git behavior)
-    wt_path="$first_arg"
-    branch="$(basename "$first_arg")"
-  else
-    # Convenience: single bare branch name → auto-compute sibling path
-    branch="$first_arg"
-    local safe_branch
-    safe_branch="$(safe_branch_name "$branch")"
-    wt_path="$(dirname "$REPO_ROOT")/${REPO_NAME}-${safe_branch}"
+  add_args=("$@")
+  if [[ $# -gt 0 ]]; then
+    known_target_path="$(extract_add_path_from_args "${add_args[@]}" || true)"
   fi
 
-  # Resolve relative paths
-  wt_path="$(resolve_path "$wt_path")"
+  local -a before_worktrees=()
+  while IFS= read -r wt; do
+    before_worktrees+=("$(resolve_git_worktree_path "$wt")")
+  done < <(list_worktree_paths_porcelain)
 
-  info "Creating worktree for branch '$branch' at $wt_path"
+  run_cmd git worktree add "${add_args[@]+"${add_args[@]}"}"
 
-  local force_flag=""
-  [[ "$force" == "1" ]] && force_flag="--force"
-
-  if [[ -n "$new_branch" ]]; then
-    run_cmd git worktree add ${force_flag:+"$force_flag"} -b "$branch" "$wt_path"
-  elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
-    run_cmd git worktree add ${force_flag:+"$force_flag"} "$wt_path" "$branch"
-  else
-    run_cmd git worktree add ${force_flag:+"$force_flag"} -b "$branch" "$wt_path"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    if [[ "$NO_PROVISION" != "1" ]]; then
+      warn "Skipping provisioning in dry-run mode"
+    fi
+    return 0
   fi
 
-  if [[ "$NO_PROVISION" != "1" ]]; then
-    local _wt_for_cleanup="$wt_path"
-    _cleanup_worktree_on_err() {
-      warn "Provisioning failed; removing created worktree at '$_wt_for_cleanup'"
-      git worktree remove --force "$_wt_for_cleanup" 2>/dev/null || true
-    }
-    trap _cleanup_worktree_on_err ERR
-    provision_worktree "$wt_path" "$branch"
-    trap - ERR
+  local wt_path=""
+  if [[ -n "$known_target_path" ]]; then
+    wt_path="$(resolve_path "$known_target_path")"
+  fi
+
+  # Detect the newly attached worktree path from git metadata.
+  local detected_new=""
+  while IFS= read -r wt; do
+    local existed=0
+    local resolved
+    resolved="$(resolve_git_worktree_path "$wt")"
+    local b
+    for b in "${before_worktrees[@]+"${before_worktrees[@]}"}"; do
+      if [[ "$b" == "$resolved" ]]; then
+        existed=1
+        break
+      fi
+    done
+    if [[ "$existed" == "0" ]]; then
+      detected_new="$resolved"
+      break
+    fi
+  done < <(list_worktree_paths_porcelain)
+
+  if [[ -n "$detected_new" ]]; then
+    wt_path="$detected_new"
+  fi
+  if [[ -z "$wt_path" ]]; then
+    warn "Created worktree path could not be resolved; skipping provisioning"
+    return 0
+  fi
+
+  local branch
+  branch="$(git -C "$wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+
+  local should_provision=0
+  if [[ "$NO_PROVISION" == "1" ]]; then
+    should_provision=0
+  elif [[ ! -f "$CONFIG_FILE" ]]; then
+    warn "Config not found at $CONFIG_FILE; skipping provisioning. Run: gh worktreex init"
+  elif ! command -v jq >/dev/null 2>&1; then
+    warn "jq not found; skipping provisioning"
+  elif ( config_load >/dev/null 2>&1 ); then
+    should_provision=1
+  else
+    warn "Config validation failed; skipping provisioning"
+  fi
+
+  if [[ "$should_provision" == "1" ]]; then
+    if ! provision_worktree "$wt_path" "$branch"; then
+      warn "Provisioning failed for '$wt_path', but worktree creation succeeded"
+    fi
   fi
 
   ok "Worktree ready: $wt_path (branch: $branch)"
@@ -279,63 +338,7 @@ cmd_status() {
 }
 
 cmd_list() {
-  config_load
-  local projects
-  projects="$(config_get_projects)"
-
-  echo ""
-  while IFS= read -r line; do
-    local wt_raw wt_path wt_branch
-    wt_raw="$(echo "$line" | awk '{print $1}')"
-    wt_path="$(resolve_git_worktree_path "$wt_raw")"
-    wt_branch="$(echo "$line" | awk '{print $3}' | tr -d '[]')"
-
-    # Skip bare worktrees
-    echo "$line" | grep -q '(bare)' && continue
-
-    local summary=""
-    for proj in $projects; do
-      local root
-      root="$(config_get_project_root "$proj")"
-      local proj_path="${wt_path}/${root}"
-      local ok_count=0 total=0
-
-      if config_has_node "$proj"; then
-        total=$((total + 1))
-        [[ -d "${proj_path}/node_modules" || -L "${proj_path}/node_modules" ]] && ok_count=$((ok_count + 1))
-      fi
-      if config_has_python "$proj"; then
-        total=$((total + 1))
-        [[ -d "${proj_path}/.venv" || -L "${proj_path}/.venv" ]] && ok_count=$((ok_count + 1))
-      fi
-      if config_has_dotenv "$proj"; then
-        total=$((total + 1))
-        [[ -f "${proj_path}/.env" || -L "${proj_path}/.env" ]] && ok_count=$((ok_count + 1))
-      fi
-
-      if [[ "$total" -gt 0 ]]; then
-        summary+=" ${proj}(${ok_count}/${total})"
-      fi
-    done
-
-    if config_has_agent_assets; then
-      local -a agent_paths=()
-      while IFS= read -r p; do
-        [[ -n "$p" ]] && agent_paths+=("$p")
-      done < <(config_get_agent_paths)
-
-      local agent_ok=0
-      local agent_total="${#agent_paths[@]}"
-      local ap
-      for ap in "${agent_paths[@]}"; do
-        [[ -e "${wt_path}/${ap}" || -L "${wt_path}/${ap}" ]] && agent_ok=$((agent_ok + 1))
-      done
-      [[ "$agent_total" -gt 0 ]] && summary+=" agent(${agent_ok}/${agent_total})"
-    fi
-
-    echo -e "${wt_path}  ${CYAN}${wt_branch}${RESET} ${summary}"
-  done < <(git worktree list)
-  echo ""
+  run_cmd git worktree list "$@"
 }
 
 cmd_remove() {
@@ -420,16 +423,17 @@ cmd_prune() {
 usage() {
   echo "Usage: gh worktreex <command> [flags]"
   echo ""
+  echo "Unrecognized commands are forwarded to: git worktree <command> ..."
+  echo ""
   echo "Commands:"
   echo "  init                              Scaffold .github/worktreex.json"
-  echo "  add  [-f] [-b <branch>] <path> [<commit-ish>]"
-  echo "                                    Create worktree + provision"
+  echo "  add  [git-worktree-add-args]      Native git worktree add + optional provisioning"
   echo "  pr   <number>                     Checkout PR in a worktree + provision"
   echo "  sync [source-path|source-branch]  Re-provision current worktree from source"
-  echo "  list                              List worktrees with provisioning summary"
+  echo "  list [git-list-args]              Native git worktree list passthrough"
   echo "  status                            Show provisioning state across worktrees"
-  echo "  remove [-f] <path|branch>         Remove worktree and clean up (alias: rm)"
-  echo "  prune                             Prune stale + merged worktrees (alias: clean)"
+  echo "  rm [-f] <path|branch>             Special remove flow (prompt branch delete)"
+  echo "  clean                             Special cleanup flow for merged branches"
   echo ""
   echo "Global flags:"
   echo "  --no-provision       Skip provisioning"
@@ -438,8 +442,8 @@ usage() {
   echo "  -v, --verbose        Verbose output"
 }
 
-# Parse global flags
-ARGS=()
+# Parse leading global flags only.
+# Everything after the command token belongs to that command verbatim.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-provision) NO_PROVISION=1; shift ;;
@@ -447,14 +451,14 @@ while [[ $# -gt 0 ]]; do
     --config)       CONFIG_FILE="$2"; shift 2 ;;
     -v|--verbose)   VERBOSE=1; shift ;;
     -h|--help)      usage; exit 0 ;;
-    *)              ARGS+=("$1"); shift ;;
+    --)             shift; break ;;
+    -*)             break ;;
+    *)              break ;;
   esac
 done
 
-set -- "${ARGS[@]+"${ARGS[@]}"}"
-
 COMMAND="${1:-}"
-shift || true
+[[ $# -gt 0 ]] && shift
 
 case "$COMMAND" in
   init)
@@ -470,8 +474,10 @@ case "$COMMAND" in
   sync)          cmd_sync "$@" ;;
   list)          cmd_list "$@" ;;
   status)        cmd_status "$@" ;;
-  remove|rm)     cmd_remove "$@" ;;
-  prune|clean)   cmd_prune "$@" ;;
+  rm)            cmd_remove "$@" ;;
+  clean)         cmd_prune "$@" ;;
   "")            usage; exit 1 ;;
-  *)             die "Unknown command: $COMMAND. Run 'gh worktreex --help' for usage." ;;
+  *)
+    run_cmd git worktree "$COMMAND" "$@"
+    ;;
 esac
